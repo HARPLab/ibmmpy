@@ -53,19 +53,28 @@ class EyeClassifier:
         
         # TODO: smoothing
         
-        # Remove low-confidence values 
-        pos[data['confidence'] < conf_thresh] = np.nan
         
         # Compute velocity
         if dist_method == DIST_METHOD_VECTOR:
-            dist = np.arcsin(sklearn.metrics.pairwise.paired_cosine_distances(pos[1:,:], pos[:-1,:]))
+            sdist = sklearn.metrics.pairwise.paired_cosine_distances(pos[1:,:], pos[:-1,:])
+            # Clamp to handle numeric errors
+            sdist[sdist > 1.] = 1.
+            sdist[sdist < -1.] = -1.
+            dist = np.arcsin(sdist)
         elif dist_method == DIST_METHOD_EUC:
             dist = sklearn.metrics.pairwise.paired_euclidean_distances(pos[1:,:], pos[:-1,:])
         else:
             raise RuntimeError("unreachable")
         dt = np.diff(data['timestamp'].values)
+        
+        veloc = dist / dt
+        
+        # Remove low-confidence values
+        veloc[ np.logical_or(data.confidence.values[1:] < conf_thresh,
+                             data.confidence.values[:-1] < conf_thresh) ] = np.nan
         # add a nan value at the beginning so the data point count remains the same
-        veloc = np.concatenate( ([np.nan], dist / dt) )
+        veloc = np.concatenate( ([np.nan], veloc) )
+        
         return pd.DataFrame({'timestamp': data['timestamp'], 'velocity': veloc}, index=data.index)
     
     @staticmethod
