@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 
-import scipy.spatial.distance
 import sklearn.mixture
+import sklearn.metrics.pairwise
 import numpy as np
 import pandas as pd
 
@@ -45,7 +45,7 @@ class EyeClassifier:
         if 'z' in data.columns and dist_method == DIST_METHOD_VECTOR:
             pos = data.loc[:, ['x','y','z']].values
         elif dist_method == DIST_METHOD_VECTOR:
-            pos = np.hstack((data.loc[:, ['x','y']].values, np.ones(len(data), 1)))
+            pos = np.hstack( (data.loc[:, ['x','y']].values, np.ones( (len(data), 1) )) )
         elif dist_method == DIST_METHOD_EUC:
             pos = data.loc[:, ['x','y']]
         else:
@@ -58,14 +58,14 @@ class EyeClassifier:
         
         # Compute velocity
         if dist_method == DIST_METHOD_VECTOR:
-            dist = np.arccos(scipy.spatial.distance.cdist(pos[1:,:], pos[:-1,:], 'cosine'))
+            dist = np.arcsin(sklearn.metrics.pairwise.paired_cosine_distances(pos[1:,:], pos[:-1,:]))
         elif dist_method == DIST_METHOD_EUC:
-            dist = scipy.spatial.distance.cdist(pos[1:,:], pos[:-1,:], 'euclidean')
+            dist = sklearn.metrics.pairwise.paired_euclidean_distances(pos[1:,:], pos[:-1,:])
         else:
             raise RuntimeError("unreachable")
         dt = np.diff(data['timestamp'].values)
         # add a nan value at the beginning so the data point count remains the same
-        veloc = np.vstack((np.nan, dist / dt))
+        veloc = np.concatenate( ([np.nan], dist / dt) )
         return pd.DataFrame({'timestamp': data['timestamp'], 'velocity': veloc}, index=data.index)
     
     @staticmethod
@@ -82,20 +82,20 @@ class EyeClassifier:
         """
         EyeClassifier._fit(self.bmm_eye0, data0)
         if self.bmm_eye0.means_[0] < self.bmm_eye0.means_[1]:
-            self.eye0_labels = [EyeClassifier.LABEL_FIX, EyeClassifier.LABEL_SAC]
+            self.eye0_labels = np.array([EyeClassifier.LABEL_FIX, EyeClassifier.LABEL_SAC])
         else:
-            self.eye0_labels = [EyeClassifier.LABEL_SAC, EyeClassifier.LABEL_FIX]
+            self.eye0_labels = np.array([EyeClassifier.LABEL_SAC, EyeClassifier.LABEL_FIX])
         EyeClassifier._fit(self.bmm_eye1, data1)
         if self.bmm_eye1.means_[0] < self.bmm_eye1.means_[1]:
-            self.eye1_labels = [EyeClassifier.LABEL_FIX, EyeClassifier.LABEL_SAC]
+            self.eye1_labels = np.array([EyeClassifier.LABEL_FIX, EyeClassifier.LABEL_SAC])
         else:
-            self.eye1_labels = [EyeClassifier.LABEL_SAC, EyeClassifier.LABEL_FIX]
+            self.eye1_labels = np.array([EyeClassifier.LABEL_SAC, EyeClassifier.LABEL_FIX])
     
     @staticmethod
     def _predict(model, model_labels, data):
-        labels = np.ones(len(data), 1)*EyeClassifier.LABEL_NOISE
+        labels = np.ones(len(data))*EyeClassifier.LABEL_NOISE
         valid_mask = np.logical_not(np.isnan(data['velocity']))
-        labels[valid_mask] = model_labels[model.predict(data[valid_mask, 'velocity'])]
+        labels[valid_mask] = model_labels[model.predict(data.loc[valid_mask, 'velocity'].values.reshape(-1,1))]
         return labels
     
     @staticmethod
@@ -110,8 +110,9 @@ class EyeClassifier:
         labels_to_fix = np.logical_and(
                 np.logical_and(labels[0:-2] == labels[2:], labels[0:-2] != labels[1:-1]),
                 labels[0:-2] != EyeClassifier.LABEL_NOISE)
-        indices = np.nonzero(labels_to_fix)
+        indices = np.nonzero(labels_to_fix)[0]
         labels[indices+1] = labels[indices]
+        return labels
         
     @staticmethod
     def fuse(labels0, labels1, ts=None, dt=None):
@@ -145,18 +146,24 @@ class EyeClassifier:
                                             ) )
             ct_sac = np.count_nonzero(cur_labels == EyeClassifier.LABEL_SAC)
             ct_fix = np.count_nonzero(cur_labels == EyeClassifier.LABEL_FIX)
+            
             if ct_fix > ct_sac:
                 fused_labels[idx] = EyeClassifier.LABEL_FIX
             elif ct_sac > ct_fix or ct_sac > 0:# they're equal and it's not entirely noise
-                fused_labels[idx] = EyeClassifier.LABEL_FIX
+                fused_labels[idx] = EyeClassifier.LABEL_SAC
+            elif cur_labels.size == 0 and idx > 0: # there's no data available
+                # just keep the label
+                fused_labels[idx] = fused_labels[idx-1]
             # otherwise leave as noise
         
         return pd.DataFrame({'timestamp': ts, 'label': fused_labels})
         
     
     def predict(self, data0, data1, ts=None, dt=None):
-        labels0 = EyeClassifier.postprocess(EyeClassifier._predict(self.bmm_eye0, self.eye0_labels, data0))
-        labels1 = EyeClassifier.postprocess(EyeClassifier._predict(self.bmm_eye1, self.eye1_labels, data1))
+        labels0 = EyeClassifier._predict(self.bmm_eye0, self.eye0_labels, data0)
+        labels1 = EyeClassifier._predict(self.bmm_eye1, self.eye1_labels, data1)
+        labels0 = EyeClassifier.postprocess(labels0)
+        labels1 = EyeClassifier.postprocess(labels1)
         return EyeClassifier.fuse(
                 pd.DataFrame({'timestamp': data0.timestamp, 'label': labels0}),
                 pd.DataFrame({'timestamp': data1.timestamp, 'label': labels1}),
@@ -177,24 +184,37 @@ class EyeClassifier:
         pandas dataframe of all detected fixations with columns 'start_timestamp', 'duration' (in ms). If gaze_data is provided, also
         includes columns 'x', 'y', which are the mean of the values of gaze_data.x and gaze_data.y for the duration of the fixation
         """
-        is_fix = labels.label.values == EyeClassifier.LABEL_FIX
+
+        is_fix = (labels.label.values == EyeClassifier.LABEL_FIX).astype(np.int8)
         fix_change = is_fix[1:] - is_fix[:-1]
-        fix_start = np.nonzero(fix_change == 1) + 1
+
+        fix_start = np.nonzero(fix_change == 1)[0] + 1
         if is_fix[0]:
             fix_start = np.concatenate( (0, fix_start) )
-        fix_end = np.nonzero(fix_change == -1)
+        fix_end = np.nonzero(fix_change == -1)[0]
         if is_fix[-1]:
-            fix_end = np.concatenate( (fix_end, is_fix.size-1))
-        
-        fix = pd.DataFrame({ 'start_timestamp': labels.timestamp[fix_start], 'duration': labels.timestamp[fix_end] - labels.timestamp[fix_start]})
+            fix_end = np.concatenate( (fix_end, [is_fix.size-1]))
+
+        fix = pd.DataFrame({ 'start_timestamp': labels.timestamp.values[fix_start], 'duration': (labels.timestamp.values[fix_end] - labels.timestamp.values[fix_start]) * 1000. })
+
         if min_fix_dur is not None:
-            fix = fix[fix.duration >= min_fix_dur, :]
+            fix = fix.loc[fix.duration >= min_fix_dur, :]
         if gaze_data is not None:
-            fix.assign(x = lambda r: np.mean( gaze_data.x[np.logical_and(gaze_data.timestamp >= r.start_timestamp,
-                                                                       gaze_data.timestamp <= r.start_timestamp + .001*r.duration)] ))
-            fix.assign(y = lambda r: np.mean( gaze_data.y[np.logical_and(gaze_data.timestamp >= r.start_timestamp,
-                                                                       gaze_data.timestamp <= r.start_timestamp + .001*r.duration)] ))
-        return gaze_data
+            m_x = [ np.mean( gaze_data.x[np.logical_and(gaze_data.timestamp.values >= r.start_timestamp,
+                                                                       gaze_data.timestamp.values <= r.start_timestamp + .001*r.duration)] )
+                   for r in fix.itertuples() ]
+            m_y = [ np.mean( gaze_data.y[np.logical_and(gaze_data.timestamp.values >= r.start_timestamp,
+                                                                       gaze_data.timestamp.values <= r.start_timestamp + .001*r.duration)] )
+                   for r in fix.itertuples() ]
+            fix = fix.assign(x=m_x, y=m_y)
+        return fix
+    
+    def get_fixations(self, data0, data1, ts=None, dt=None, gaze_data=None, min_fix_dur=100):
+        if ts is None and dt is None and gaze_data is not None:
+            ts = gaze_data.timestamp
+        labels = self.predict(data0, data1, ts, dt)
+        return EyeClassifier.get_fixations_from_labels(labels, gaze_data, min_fix_dur)
+            
         
         
 
