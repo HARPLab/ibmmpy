@@ -208,7 +208,7 @@ class EyeClassifier:
 
         if min_fix_dur is not None:
             fix = fix.loc[fix.duration >= min_fix_dur, :]
-            fix.index = np.arange(len(fix), dtype=np.int8)
+            fix.index = np.arange(len(fix))
         if gaze_data is not None:
             m_x = [ np.mean( gaze_data.x[np.logical_and(gaze_data.timestamp.values >= r.start_timestamp,
                                                                        gaze_data.timestamp.values <= r.start_timestamp + .001*r.duration)] )
