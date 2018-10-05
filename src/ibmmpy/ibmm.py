@@ -208,6 +208,7 @@ class EyeClassifier:
 
         if min_fix_dur is not None:
             fix = fix.loc[fix.duration >= min_fix_dur, :]
+            fix.index = np.arange(len(fix), dtype=np.int8)
         if gaze_data is not None:
             m_x = [ np.mean( gaze_data.x[np.logical_and(gaze_data.timestamp.values >= r.start_timestamp,
                                                                        gaze_data.timestamp.values <= r.start_timestamp + .001*r.duration)] )
@@ -216,11 +217,12 @@ class EyeClassifier:
                                                                        gaze_data.timestamp.values <= r.start_timestamp + .001*r.duration)] )
                    for r in fix.itertuples() ]
             fix = fix.assign(x=m_x, y=m_y)
+        fix.index.name = 'id'
         return fix
     
     def get_fixations(self, data0, data1, ts=None, dt=None, gaze_data=None, min_fix_dur=100):
         if ts is None and dt is None and gaze_data is not None:
-            ts = gaze_data.timestamp
+            ts = gaze_data.timestamp.values
         labels = self.predict(data0, data1, ts, dt)
         return EyeClassifier.get_fixations_from_labels(labels, gaze_data, min_fix_dur)
             
