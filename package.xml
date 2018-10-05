@@ -1,0 +1,19 @@
+<?xml version="1.0"?>
+<package format="2">
+    <name>ibmmpy</name>
+    <version>0.1.0</version>
+    <description>
+        Python library for implementing I-BMM event detection for gaze data.
+    </description>
+    <author email="rmaronson@cmu.edu">Reuben Aronson</author>
+    <maintainer email="rmaronson@cmu.edu">Reuben Aronson</maintainer>
+    <license>BSD</license>
+    <buildtool_depend>catkin</buildtool_depend>
+    <depend>python</depend>
+    <depend>python-numpy</depend>
+    <depend>python-scikit-learn</depend>
+    <depend>python-pandas</depend>
+    <depend>python-scipy</depend>
+</package>
+
+
