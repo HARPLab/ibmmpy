@@ -109,13 +109,13 @@ class EyeClassifier:
         if world is not None:
             EyeClassifier._fit(self.world_model, world)
             if self.world_model.means_[0] < self.world_model.means_[1]:
-                self.world_labels = [np.array([EyeClassifier.LABEL_FIX, EyeClassifier.LABEL_SAC])]
+                self.world_labels = np.array([EyeClassifier.LABEL_FIX, EyeClassifier.LABEL_SAC])
             else:
-                self.world_labels = [np.array([EyeClassifier.LABEL_SAC, EyeClassifier.LABEL_FIX])]
+                self.world_labels = np.array([EyeClassifier.LABEL_SAC, EyeClassifier.LABEL_FIX])
             
     @staticmethod
     def _predict(model, model_labels, data):
-        labels = np.ones(len(data))*EyeClassifier.LABEL_NOISE
+        labels = np.ones(len(data), dtype=np.int8)*EyeClassifier.LABEL_NOISE
         valid_mask = np.logical_not(np.isnan(data['velocity']))
         labels[valid_mask] = model_labels[model.predict(data.loc[valid_mask, 'velocity'].values.reshape(-1,1))]
         return labels
@@ -306,7 +306,6 @@ class EyeClassifier:
         if ts is None and dt is None and gaze_data is not None:
             ts = gaze_data.timestamp.values
         labels, _ = self.predict(eyes=eyes, world=world, ts=ts, dt=dt)
-        print(labels)
         return EyeClassifier.get_fixations_from_labels(labels, gaze_data, min_fix_dur)
             
         

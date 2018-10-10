@@ -24,6 +24,7 @@ gaze_data = pd.DataFrame({
         'x': np.concatenate(( np.random.rand(25)*.01 + 2., np.random.rand(7)*.01+3, np.random.rand(18)*.01+4 )),
         'y': np.concatenate(( np.random.rand(25)*.01 + 6., np.random.rand(7)*.01+5, np.random.rand(18)*.01+4 ))
     }) 
+gaze_data = gaze_data.assign(confidence = np.interp(gaze_data.timestamp, synth_data0.timestamp, synth_data0.confidence))
 
 if __name__ == "__main__":
     print(synth_data0)
@@ -43,5 +44,10 @@ if __name__ == "__main__":
     fix = model.get_fixations(eyes=(vel0, vel1), gaze_data=gaze_data, dt=0.01)
     print(fix)
     
-    
+    # world-based
+    vel_w = EyeClassifier.preprocess(gaze_data)
+    model = EyeClassifier()
+    model.fit(world=vel_w)
+    fix = model.get_fixations(world=vel_w, gaze_data=gaze_data)
+    print(fix)
     
