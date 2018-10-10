@@ -12,8 +12,11 @@ class EyeClassifier:
     
     def __init__(self, **kwargs):
         
-        self.bmm_eye0 = sklearn.mixture.BayesianGaussianMixture(n_components=2, weight_concentration_prior_type='dirichlet_distribution', **kwargs)
-        self.bmm_eye1 = sklearn.mixture.BayesianGaussianMixture(n_components=2, weight_concentration_prior_type='dirichlet_distribution', **kwargs)
+        self.eye_models = (sklearn.mixture.BayesianGaussianMixture(n_components=2, weight_concentration_prior_type='dirichlet_distribution', **kwargs),
+                           sklearn.mixture.BayesianGaussianMixture(n_components=2, weight_concentration_prior_type='dirichlet_distribution', **kwargs))
+        self.eye_labels = None
+        self.world_model = sklearn.mixture.BayesianGaussianMixture(n_components=2, weight_concentration_prior_type='dirichlet_distribution', **kwargs)
+        self.world_labels = None
     
     @staticmethod
     def preprocess(data, dist_method='vector', conf_thresh=0.8, smoothing='none'):
@@ -81,25 +84,35 @@ class EyeClassifier:
     def _fit(model, data):
         model.fit(data.loc[np.logical_not(np.isnan(data['velocity'])), 'velocity'].values.reshape(-1,1))
         
-    def fit(self, data0, data1):
+    def fit(self, eyes=None, world=None):
         """
         Fit the bayesian mixture models for each eye.
-        
+                
         Arguments:
-        data0 -- Preprocessed data for eye 0 (in the format output by preprocess() above)
-        data1 -- Preprocessed data for eye 1
+        eyes -- An iterable of length 1 or 2, including preprocessed data (in the format output by preprocess() ), of eye positions
+        world -- Preprocessed world positions
         """
-        EyeClassifier._fit(self.bmm_eye0, data0)
-        if self.bmm_eye0.means_[0] < self.bmm_eye0.means_[1]:
-            self.eye0_labels = np.array([EyeClassifier.LABEL_FIX, EyeClassifier.LABEL_SAC])
-        else:
-            self.eye0_labels = np.array([EyeClassifier.LABEL_SAC, EyeClassifier.LABEL_FIX])
-        EyeClassifier._fit(self.bmm_eye1, data1)
-        if self.bmm_eye1.means_[0] < self.bmm_eye1.means_[1]:
-            self.eye1_labels = np.array([EyeClassifier.LABEL_FIX, EyeClassifier.LABEL_SAC])
-        else:
-            self.eye1_labels = np.array([EyeClassifier.LABEL_SAC, EyeClassifier.LABEL_FIX])
+        if eyes is not None:
+            if len(eyes) > 0:
+                EyeClassifier._fit(self.eye_models[0], eyes[0])
+                if self.eye_models[0].means_[0] < self.eye_models[0].means_[1]:
+                    self.eye_labels = [np.array([EyeClassifier.LABEL_FIX, EyeClassifier.LABEL_SAC])]
+                else:
+                    self.eye_labels = [np.array([EyeClassifier.LABEL_SAC, EyeClassifier.LABEL_FIX])]
+            if len(eyes) > 1:
+                EyeClassifier._fit(self.eye_models[1], eyes[1])
+                if self.eye_models[1].means_[0] < self.eye_models[1].means_[1]:
+                    self.eye_labels.append(np.array([EyeClassifier.LABEL_FIX, EyeClassifier.LABEL_SAC]))
+                else:
+                    self.eye_labels.append(np.array([EyeClassifier.LABEL_SAC, EyeClassifier.LABEL_FIX]))
     
+        if world is not None:
+            EyeClassifier._fit(self.world_model, world)
+            if self.world_model.means_[0] < self.world_model.means_[1]:
+                self.world_labels = [np.array([EyeClassifier.LABEL_FIX, EyeClassifier.LABEL_SAC])]
+            else:
+                self.world_labels = [np.array([EyeClassifier.LABEL_SAC, EyeClassifier.LABEL_FIX])]
+            
     @staticmethod
     def _predict(model, model_labels, data):
         labels = np.ones(len(data))*EyeClassifier.LABEL_NOISE
@@ -129,9 +142,9 @@ class EyeClassifier:
         return labels
         
     @staticmethod
-    def fuse(labels0, labels1, ts=None, dt=None):
+    def fuse(labels, ts=None, dt=None):
         """
-        Fuse two different label sets to come to an agreement.
+        Fuse different label sets to come to an agreement.
         
         Algorithm, roughly:
             For each period n*dt - (n+1)*dt:
@@ -139,8 +152,7 @@ class EyeClassifier:
                 Result label = majority vote among SAC, FIX; NSE if all are noise; break ties as SAC
         
         Arguments:
-        labels0 -- pandas-style dataframe with columns 'timestamp' and 'label', as determined by EyeClassifier.postprocess
-        labels1 -- second set as in labels0, e.g. from the other eye
+        labels -- Iterable of pandas-style dataframe with columns 'timestamp' and 'label'
         ts -- list of timestamps to sample at, or None to use automatic samples from dt
         dt -- sampling period to use, if ts is None
         
@@ -150,7 +162,7 @@ class EyeClassifier:
             label -- the fused labels
         """
         if ts is None:
-            ts = np.arange( min(labels0.timestamp.values[0], labels1.timestamp.values[0]), max(labels0.timestamp.values[-1], labels1.timestamp.values[-1]), dt)
+            ts = np.arange( min(l.timestamp.values[0] for l in labels), max(l.timestamp.values[-1] for l in labels), dt)
         fused_labels = np.zeros(ts.shape, dtype=np.int8) + EyeClassifier.LABEL_NOISE
         cts_sac = np.zeros(ts.shape, dtype=np.int8)
         cts_fix = np.zeros(ts.shape, dtype=np.int8)
@@ -158,9 +170,7 @@ class EyeClassifier:
         for idx in range(ts.size):
             tprev = ts[idx-1] if idx > 0 else -np.inf
             tnext = ts[idx]
-            cur_labels = np.concatenate( ( labels0.label[np.logical_and(labels0.timestamp > tprev, labels0.timestamp <= tnext)],
-                                           labels1.label[np.logical_and(labels1.timestamp > tprev, labels1.timestamp <= tnext)]
-                                            ) )
+            cur_labels = np.concatenate( [l.label[np.logical_and(l.timestamp > tprev, l.timestamp <= tnext)] for l in labels] )
             ct_sac = np.count_nonzero(cur_labels == EyeClassifier.LABEL_SAC)
             ct_fix = np.count_nonzero(cur_labels == EyeClassifier.LABEL_FIX)
             
@@ -192,16 +202,37 @@ class EyeClassifier:
         return data
         
     
-    def predict(self, data0, data1, ts=None, dt=None):
-        labels0 = EyeClassifier._predict(self.bmm_eye0, self.eye0_labels, data0)
-        labels1 = EyeClassifier._predict(self.bmm_eye1, self.eye1_labels, data1)
-        labels0 = EyeClassifier.postprocess(labels0)
-        labels1 = EyeClassifier.postprocess(labels1)
-        return EyeClassifier.fuse(
-                pd.DataFrame({'timestamp': data0.timestamp, 'label': labels0}),
-                pd.DataFrame({'timestamp': data1.timestamp, 'label': labels1}),
-                ts, dt
-            ), labels0, labels1
+    def predict(self, eyes=None, world=None, ts=None, dt=None):
+        """
+        Predict labels from a collection of data.
+        
+        First predicts the labels for each type of data from the internal model. Then fuses the data, as described in fuse().
+        
+        Arguments:
+        eyes -- 1- or 2-length iterable of eye data, in the format output by preprocess() above, or None
+        world -- Eye data in the world frame, in the format output by preprocess() above, or None
+        ts -- Timestamps to use, or None. See fuse() for logic.
+        dt -- Time period to use, or None. See fuse() for logic.
+        
+        Returns:
+        Tuple of (fused_data, iterable of labels found)
+        """
+        data_to_fuse = []
+        if eyes is not None:
+            if len(eyes) > 0:
+                labels0 = EyeClassifier._predict(self.eye_models[0], self.eye_labels[0], eyes[0])
+                labels0 = EyeClassifier.postprocess(labels0)
+                data_to_fuse.append(pd.DataFrame({'timestamp': eyes[0].timestamp, 'label': labels0}))
+            if len(eyes) > 1:
+                labels1 = EyeClassifier._predict(self.eye_models[1], self.eye_labels[1], eyes[1])
+                labels1 = EyeClassifier.postprocess(labels1)
+                data_to_fuse.append(pd.DataFrame({'timestamp': eyes[1].timestamp, 'label': labels1}))
+
+        if world is not None:
+            labelsw = EyeClassifier._predict(self.world_model, self.world_labels, world)
+            labelsw = EyeClassifier.postprocess(labelsw)
+            data_to_fuse.append(pd.DataFrame({'timestamp': world.timestamp, 'label': labelsw}))
+        return EyeClassifier.fuse(data_to_fuse, ts, dt), data_to_fuse
         
     @staticmethod
     def get_fixations_from_labels(labels, gaze_data=None, min_fix_dur=100):
@@ -222,6 +253,7 @@ class EyeClassifier:
         # possibly there should be a limit to the amount of noise allowed within a fixation?
 #         is_fix = np.logical_or(labels.label.values == EyeClassifier.LABEL_FIX,
 #                                 labels.label.values == EyeClassifier.LABEL_NOISE).astype(np.int8)
+
         is_fix = (labels.label.values == EyeClassifier.LABEL_FIX).astype(np.int8)
         fix_change = is_fix[1:] - is_fix[:-1]
 
@@ -274,10 +306,11 @@ class EyeClassifier:
         fix.index.name = 'id'
         return fix
     
-    def get_fixations(self, data0, data1, ts=None, dt=None, gaze_data=None, min_fix_dur=100):
+    def get_fixations(self, eyes=None, world=None, ts=None, dt=None, gaze_data=None, min_fix_dur=100):
         if ts is None and dt is None and gaze_data is not None:
             ts = gaze_data.timestamp.values
-        labels = self.predict(data0, data1, ts, dt)
+        labels, _ = self.predict(eyes=eyes, world=world, ts=ts, dt=dt)
+        print(labels)
         return EyeClassifier.get_fixations_from_labels(labels, gaze_data, min_fix_dur)
             
         

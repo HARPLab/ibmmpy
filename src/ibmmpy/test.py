@@ -35,14 +35,12 @@ if __name__ == "__main__":
     print(vel1)
     
     model = EyeClassifier()
-    model.fit(vel0, vel1)
-    print(model.bmm_eye0.means_)
-    print(model.bmm_eye1.means_)
+    model.fit(eyes=(vel0, vel1))
     
-    labels = model.predict(vel0, vel1, ts=np.arange(100., 101., 0.05))
+    labels, indiv_labels = model.predict(eyes=(vel0, vel1), ts=np.arange(100., 101., 0.05))
     print(labels)
     
-    fix = model.get_fixations(vel0, vel1, gaze_data=gaze_data)
+    fix = model.get_fixations(eyes=(vel0, vel1), gaze_data=gaze_data, dt=0.01)
     print(fix)
     
     
