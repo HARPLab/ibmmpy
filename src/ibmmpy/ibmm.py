@@ -163,7 +163,7 @@ class EyeClassifier:
         """
         if ts is None:
             ts = np.arange( min(l.timestamp.values[0] for l in labels), max(l.timestamp.values[-1] for l in labels), dt)
-        fused_labels = np.zeros(ts.shape, dtype=np.int8) + EyeClassifier.LABEL_NOISE
+        fused_labels = np.full(ts.shape, EyeClassifier.LABEL_NOISE, dtype=np.int8)
         cts_sac = np.zeros(ts.shape, dtype=np.int8)
         cts_fix = np.zeros(ts.shape, dtype=np.int8)
         cts_nse = np.zeros(ts.shape, dtype=np.int8)
