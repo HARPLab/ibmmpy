@@ -182,14 +182,10 @@ class EyeClassifier:
                 fused_labels[idx] = EyeClassifier.LABEL_SAC
             elif ct_fix > 0:
                 fused_labels[idx] = EyeClassifier.LABEL_FIX
-#             if ct_fix > ct_sac:
-#                 fused_labels[idx] = EyeClassifier.LABEL_FIX
-#             elif ct_sac > ct_fix or ct_sac > 0:# they're equal and it's not entirely noise
-#                 fused_labels[idx] = EyeClassifier.LABEL_SAC
-#             elif ct_fix == 0 and ct_sac == 0 and idx > 0: # there's no data available
-                # leave it as noise for now
-#                 fused_labels[idx] = fused_labels[idx-1]
-            # otherwise leave as noise
+            elif len(cur_labels) == 0 and idx > 0:
+                # no data at all, so just hold from the last one
+                # likely we're sampling faster than the actual data we have
+                fused_labels[idx] = fused_labels[idx-1]
             
         # Fix length-one holes
         fused_labels = EyeClassifier.postprocess(fused_labels)
