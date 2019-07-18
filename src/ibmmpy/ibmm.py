@@ -4,6 +4,24 @@ import sklearn.mixture
 import sklearn.metrics.pairwise
 import numpy as np
 import pandas as pd
+import collections
+
+class Options(collections.Mapping):
+    @classmethod
+    def keys(cls):
+        return cls.__slots__
+    def __getitem__(self, key):
+        return getattr(self, key)
+    def __setitem__(self, key, val):
+        setattr(self, key, val)
+    @classmethod
+    def __iter__(cls):
+        return iter(cls.__slots__)
+    @classmethod
+    def __len__(cls):
+        return len(cls.__slots__)
+    def __repr__(self):
+        return '{}({})'.format(self.__class__.__name__, dict(self))
 
 class EyeClassifier:
     LABEL_FIX = 0
@@ -17,6 +35,14 @@ class EyeClassifier:
         self.eye_labels = None
         self.world_model = sklearn.mixture.BayesianGaussianMixture(n_components=2, weight_concentration_prior_type='dirichlet_distribution', **kwargs)
         self.world_labels = None
+        
+    class PreprocessOptions(Options):
+        __slots__ = ('dist_method', 'conf_threshold', 'smoothing')
+        __ros_name__ = 'preprocess_options'
+        def __init__(self, **kwargs):
+            self.dist_method = kwargs.get('dist_method') or 'vector'
+            self.conf_threshold = kwargs.get('conf_threshold') or 0.8
+            self.smoothing = kwargs.get('smoothing') or 'none'
     
     @staticmethod
     def preprocess(data, dist_method='vector', conf_thresh=0.8, smoothing='none'):
@@ -50,9 +76,13 @@ class EyeClassifier:
         elif dist_method == DIST_METHOD_VECTOR:
             pos = np.hstack( (data.loc[:, ['x','y']].values, np.ones( (len(data), 1) )) )
         elif dist_method == DIST_METHOD_EUC:
-            pos = data.loc[:, ['x','y']]
+            pos = data.loc[:, ['x','y']].values
         else:
             raise RuntimeError("unreachable")
+        
+        # fail if no data
+        if pos.shape[0] < 2:
+            return pd.DataFrame({'timestamp': data.timestamp, 'velocity': np.full(pos.shape[0], np.nan)})
         
         # TODO: smoothing
         
@@ -117,7 +147,8 @@ class EyeClassifier:
     def _predict(model, model_labels, data):
         labels = np.ones(len(data), dtype=np.int8)*EyeClassifier.LABEL_NOISE
         valid_mask = np.logical_not(np.isnan(data['velocity']))
-        labels[valid_mask] = model_labels[model.predict(data.loc[valid_mask, 'velocity'].values.reshape(-1,1))]
+        if np.any(valid_mask):
+            labels[valid_mask] = model_labels[model.predict(data.loc[valid_mask, 'velocity'].values.reshape(-1,1))]
         return labels
     
     @staticmethod
@@ -129,6 +160,10 @@ class EyeClassifier:
         
         This could be more sophisticated someday.
         """
+        if len(labels) <= 2:
+            # not enough context to fix anything
+            return labels
+        
         if noise_only:
             labels_to_fix = np.logical_and(
                 np.logical_and(labels[0:-2] == labels[2:], labels[1:-1] == EyeClassifier.LABEL_NOISE),
@@ -140,7 +175,27 @@ class EyeClassifier:
         indices = np.flatnonzero(labels_to_fix)
         labels[indices+1] = labels[indices]
         return labels
-        
+    
+    @staticmethod
+    def _fuse_local(cur_labels):
+        ct_sac = np.count_nonzero(cur_labels == EyeClassifier.LABEL_SAC)
+        ct_fix = np.count_nonzero(cur_labels == EyeClassifier.LABEL_FIX)
+            
+        ct_nse = np.count_nonzero(cur_labels == EyeClassifier.LABEL_NOISE)
+    
+        if ct_sac > 0:
+            lbl = EyeClassifier.LABEL_SAC
+        elif ct_fix > 0:
+            lbl = EyeClassifier.LABEL_FIX
+        elif len(cur_labels) == 0:
+            # no data at all, so just hold from the last one
+            # likely we're sampling faster than the actual data we have
+            lbl = None
+        else:
+            lbl = EyeClassifier.LABEL_NOISE
+            
+        return lbl, {'ct_sac': ct_sac, 'ct_nse': ct_nse, 'ct_fix': ct_fix}
+            
     @staticmethod
     def fuse(labels, ts=None, dt=None):
         """
@@ -162,7 +217,9 @@ class EyeClassifier:
             label -- the fused labels
         """
         if ts is None:
-            ts = np.arange( min(l.timestamp.values[0] for l in labels), max(l.timestamp.values[-1] for l in labels), dt)
+            ts = np.arange( labels.timestamp.values[0], labels.timestamp.values[-1], dt)
+            if ts[-1] < labels.timestamp.values[-1]:
+                ts = np.hstack((ts, labels.timestamp.values[-1]))
         fused_labels = np.full(ts.shape, EyeClassifier.LABEL_NOISE, dtype=np.int8)
         cts_sac = np.zeros(ts.shape, dtype=np.int8)
         cts_fix = np.zeros(ts.shape, dtype=np.int8)
@@ -170,21 +227,17 @@ class EyeClassifier:
         for idx in range(ts.size):
             tprev = ts[idx-1] if idx > 0 else -np.inf
             tnext = ts[idx]
-            cur_labels = np.concatenate( [l.label[np.logical_and(l.timestamp > tprev, l.timestamp <= tnext)] for l in labels] )
-            ct_sac = np.count_nonzero(cur_labels == EyeClassifier.LABEL_SAC)
-            ct_fix = np.count_nonzero(cur_labels == EyeClassifier.LABEL_FIX)
+            cur_labels = labels[np.logical_and(labels.timestamp >= tprev, labels.timestamp < tnext)]
             
-            cts_sac[idx] = ct_sac
-            cts_fix[idx] = ct_fix
-            cts_nse[idx] = np.count_nonzero(cur_labels == EyeClassifier.LABEL_NOISE)
+            label, cts = EyeClassifier._fuse_local(cur_labels)
             
-            if ct_sac > 0:
-                fused_labels[idx] = EyeClassifier.LABEL_SAC
-            elif ct_fix > 0:
-                fused_labels[idx] = EyeClassifier.LABEL_FIX
-            elif len(cur_labels) == 0 and idx > 0:
-                # no data at all, so just hold from the last one
-                # likely we're sampling faster than the actual data we have
+            cts_sac[idx] = cts['ct_sac']
+            cts_fix[idx] = cts['ct_fix']
+            cts_nse[idx] = cts['ct_nse']
+            
+            if label is not None:
+                fused_labels[idx] = label
+            elif idx > 0:
                 fused_labels[idx] = fused_labels[idx-1]
             
         # Fix length-one holes
@@ -198,7 +251,7 @@ class EyeClassifier:
         return data
         
     
-    def predict(self, eyes=None, world=None, ts=None, dt=None):
+    def predict(self, eyes=None, world=None, ts=None, dt=None, fuse=True):
         """
         Predict labels from a collection of data.
         
@@ -218,17 +271,21 @@ class EyeClassifier:
             if len(eyes) > 0:
                 labels0 = EyeClassifier._predict(self.eye_models[0], self.eye_labels[0], eyes[0])
                 labels0 = EyeClassifier.postprocess(labels0)
-                data_to_fuse.append(pd.DataFrame({'timestamp': eyes[0].timestamp, 'label': labels0}))
+                data_to_fuse.append(pd.DataFrame({'timestamp': eyes[0].timestamp, 'label': labels0, 'source': 'eye0'}))
             if len(eyes) > 1:
                 labels1 = EyeClassifier._predict(self.eye_models[1], self.eye_labels[1], eyes[1])
                 labels1 = EyeClassifier.postprocess(labels1)
-                data_to_fuse.append(pd.DataFrame({'timestamp': eyes[1].timestamp, 'label': labels1}))
+                data_to_fuse.append(pd.DataFrame({'timestamp': eyes[1].timestamp, 'label': labels1, 'source': 'eye1'}))
 
         if world is not None:
             labelsw = EyeClassifier._predict(self.world_model, self.world_labels, world)
             labelsw = EyeClassifier.postprocess(labelsw)
-            data_to_fuse.append(pd.DataFrame({'timestamp': world.timestamp, 'label': labelsw}))
-        return EyeClassifier.fuse(data_to_fuse, ts, dt), data_to_fuse
+            data_to_fuse.append(pd.DataFrame({'timestamp': world.timestamp, 'label': labelsw, 'source': 'world'}))
+        data_to_fuse = pd.concat(data_to_fuse).sort_values(by=['timestamp'])
+        if fuse:
+            return EyeClassifier.fuse(data_to_fuse, ts, dt), data_to_fuse
+        else:
+            return data_to_fuse
         
     @staticmethod
     def get_fixations_from_labels(labels, gaze_data=None, min_fix_dur=100):
@@ -249,6 +306,8 @@ class EyeClassifier:
         # possibly there should be a limit to the amount of noise allowed within a fixation?
 #         is_fix = np.logical_or(labels.label.values == EyeClassifier.LABEL_FIX,
 #                                 labels.label.values == EyeClassifier.LABEL_NOISE).astype(np.int8)
+        if len(labels) < 2:
+            return pd.DataFrame({ 'start_timestamp': [], 'duration': []})
 
         is_fix = (labels.label.values == EyeClassifier.LABEL_FIX).astype(np.int8)
         fix_change = is_fix[1:] - is_fix[:-1]

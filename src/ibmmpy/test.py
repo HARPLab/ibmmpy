@@ -1,8 +1,11 @@
 #!/usr/bin/env python
 
 from ibmm import EyeClassifier
+from ibmm_online import EyeClassifierOnline
 import pandas as pd
 import numpy as np
+
+np.random.seed(10)
 
 synth_data0 = pd.DataFrame({
         'timestamp': np.arange(100., 101., 0.05) + np.random.rand( 20 )*0.01,
@@ -26,7 +29,7 @@ gaze_data = pd.DataFrame({
     }) 
 gaze_data = gaze_data.assign(confidence = np.interp(gaze_data.timestamp, synth_data0.timestamp, synth_data0.confidence))
 
-if __name__ == "__main__":
+def test1():
     print(synth_data0)
     print(synth_data1)
     
@@ -50,4 +53,43 @@ if __name__ == "__main__":
     model.fit(world=vel_w)
     fix = model.get_fixations(world=vel_w, gaze_data=gaze_data)
     print(fix)
+    
+def test2():
+    online_processor = EyeClassifierOnline(dt=0.05, detection_criteria=['eyes'])
+    online_processor.train({'eyes': (synth_data0, synth_data1)})
+    
+    def get_filtered_subset(min_tm, max_tm):
+        return 
+    
+    dt = 0.01
+    fix = []
+    for t in np.arange(100, 101, dt):
+        subset = {
+            'world': gaze_data[np.logical_and(gaze_data.timestamp >= t, gaze_data.timestamp < t+dt)],
+            'eyes': (synth_data0[np.logical_and(synth_data0.timestamp >= t, synth_data0.timestamp < t+dt)],
+                     synth_data1[np.logical_and(synth_data1.timestamp >= t, synth_data1.timestamp < t+dt)])
+            }
+        print(subset)
+        next_fix = online_processor.classify(subset)
+        print('--------\n{}:\n{}\n======'.format(t, next_fix))
+        fix.append(next_fix)
+    last_fix = online_processor.finish()
+    print('--------\n{}:\n{}\n======'.format('last', last_fix))
+    fix.append(last_fix)
+    
+    print('|||||||||||||||\n{}'.format(pd.concat(fix, sort=False)))
+    
+    
+    vel0 = EyeClassifier.preprocess(synth_data0)
+    vel1 = EyeClassifier.preprocess(synth_data1)
+    fix2 = online_processor._classifier.get_fixations(eyes=(vel0, vel1), gaze_data=gaze_data, dt=0.05)
+    print('|||||||||||||\nOffline:\n{}'.format(fix2))
+    
+if __name__ == "__main__":
+    test2()
+        
+        
+        
+        
+        
     
