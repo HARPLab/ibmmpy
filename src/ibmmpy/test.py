@@ -85,6 +85,13 @@ def test2():
     fix2 = online_processor._classifier.get_fixations(eyes=(vel0, vel1), gaze_data=gaze_data, dt=0.05)
     print('|||||||||||||\nOffline:\n{}'.format(fix2))
     
+    
+def randomized_online_test(n=1):
+    for i in range(n):
+        np.random.seed(i)
+        
+        # generate fixations 
+    
 if __name__ == "__main__":
     test2()
         

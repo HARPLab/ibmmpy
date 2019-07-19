@@ -1,0 +1,28 @@
+# Goal
+
+uint8 ACTION_CALIBRATE
+uint8 ACTION_DETECT
+uint8 action # either ACTION_CALIBRATE or ACTION_DETECT
+
+# Data to use
+string topic
+bool use_world
+bool use_eye0
+bool use_eye1 # NOTE: if use_eye0 is false, use_eye1 will not be checked!
+
+# Termination conditions. If none are specified, runs until preempted
+time end_time # specify a time to auto-finish collecting data, optional
+int32 num_points # specify an amount of data to collect, optional
+
+# TODO: Lots of classification parameters
+
+---
+# Result
+# all we really need is a bool success and a string message which are implemented by the action server
+# so this is empty
+# could maybe do info about fixations collected but... why :)
+
+---
+# Feedback
+# do we need this? could return fixations as they're detected but again... why
+

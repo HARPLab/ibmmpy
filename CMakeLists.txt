@@ -10,10 +10,12 @@ project(ibmmpy)
 # catkin_INCLUDE_DIRS, catkin_LIBRARIES, catkin_LIBRARY_DIRS
 
 find_package(catkin REQUIRED COMPONENTS
+  std_msgs
+  geometry_msgs
+  message_generation
+  actionlib
+  actionlib_msgs
             )
- 
-# Set up the ROS Catkin package settings.
-catkin_package()
  
 # Add ALL the includes we need to build: stuff from catkin AND system dependencies.
 include_directories(
@@ -23,3 +25,26 @@ include_directories(
 )
 
 catkin_python_setup()
+
+add_message_files(
+  FILES
+  GazeDataPoint.msg
+  GazeData.msg
+  FixationDataPoint.msg
+  FixationData.msg
+)
+
+add_action_files(
+    FILES
+    Detector.action
+)
+
+generate_messages(
+    DEPENDENCIES
+    std_msgs
+    geometry_msgs
+    actionlib_msgs
+)
+# Set up the ROS Catkin package settings.
+catkin_package()
+ 
