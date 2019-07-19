@@ -60,7 +60,7 @@ class EyeClassifierOnline:
             self._prev_label = None
             
         def __call__(self, raw_labels):
-            if self.dt is None or len(raw_labels) == 0:
+            if self.dt is None or len(raw_labels) == 0 or self.dt == 0:
                 return raw_labels.loc[:,['timestamp','label']] # no grouping specified so a no-op
             
             labels = []

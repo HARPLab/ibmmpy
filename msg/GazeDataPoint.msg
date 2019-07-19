@@ -1,4 +1,5 @@
 std_msgs/Header header
 
-geometry_msgs/Point norm_pos
+float64 x
+float64 y
 float64 confidence

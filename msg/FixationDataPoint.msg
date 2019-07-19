@@ -1,7 +1,8 @@
 uint32 id
-time start_time
+time start_timestamp
 float64 duration
-geometry_msgs/Point center
+float64 x_center
+float64 y_center
 
 # TODO: more metadata?
 GazeDataPoint[] raw_data

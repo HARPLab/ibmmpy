@@ -15,6 +15,8 @@ time end_time # specify a time to auto-finish collecting data, optional
 int32 num_points # specify an amount of data to collect, optional
 
 # TODO: Lots of classification parameters
+float64 label_combination_period # sec
+float64 min_fix_duration # sec
 
 ---
 # Result
