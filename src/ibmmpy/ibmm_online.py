@@ -115,7 +115,7 @@ class EyeClassifierOnline:
             all_labels.label = fixed_labels
             mask = np.full(len(all_labels), True, dtype=bool)
             if len(all_labels) > 0: # make sure we've actually started collecting data
-                if len(self._prev_labels) > 0: # if we've already collected some data
+                if len(self._prev_labels) > 1: # if we've already collected some data
                     # don't double-send the first point since we sent it last time
                     mask[0] = False
                     
@@ -166,7 +166,6 @@ class EyeClassifierOnline:
             else:
                 self._prev_labels = labels.tail(1)
                 self._prev_data = _call_on_eyes_and_world(lambda d: d[0][d[0].timestamp >= labels.timestamp.values[-1]], 0, (data,))
-                
             fix = ibmm.EyeClassifier.get_fixations_from_labels(labels, data['world'] if 'world' in data else None, self.min_fix_dur)
             if len(fix) > 0:
                 fix.index = fix.index + self._last_fix_id + 1
@@ -188,11 +187,14 @@ class EyeClassifierOnline:
         self._classifier.fit(**processed_data)
     
     def classify(self, raw_point):
-        cur_vel = self._preprocess(raw_point)
-        cur_vel_filt = {k:v for k,v in cur_vel.items() if k in self.detection_criteria}
-        raw_labels = self._classifier.predict(fuse=False, **cur_vel_filt)
+        data_filt = {k:v for k,v in raw_point.items() if k in self.detection_criteria}
+        cur_vel = self._preprocess(data_filt)
+        raw_labels = self._classifier.predict(fuse=False, **cur_vel)
+#         print('raw labels: {}'.format(raw_labels))
         processed_labels = self._fuse(raw_labels)
+#         print('fused labels: {}'.format(processed_labels))
         postprocessed_labels = self._postprocess(processed_labels)
+#         print('postprocessed labels: {}'.format(postprocessed_labels))
         fix = self._get_fixations(raw_point, postprocessed_labels)
         return fix
     
