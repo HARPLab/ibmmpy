@@ -1,3 +1,5 @@
+std_msgs/Header header
+
 uint32 id
 time start_timestamp
 float64 duration

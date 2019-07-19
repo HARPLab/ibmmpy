@@ -31,7 +31,6 @@ add_message_files(
   GazeDataPoint.msg
   GazeData.msg
   FixationDataPoint.msg
-  FixationData.msg
 )
 
 add_action_files(

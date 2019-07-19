@@ -1,7 +1,7 @@
 # Goal
 
-uint8 ACTION_CALIBRATE
-uint8 ACTION_DETECT
+uint8 ACTION_CALIBRATE = 1
+uint8 ACTION_DETECT = 2
 uint8 action # either ACTION_CALIBRATE or ACTION_DETECT
 
 # Data to use
@@ -13,6 +13,7 @@ bool use_eye1 # NOTE: if use_eye0 is false, use_eye1 will not be checked!
 # Termination conditions. If none are specified, runs until preempted
 time end_time # specify a time to auto-finish collecting data, optional
 int32 num_points # specify an amount of data to collect, optional
+float64 detection_time # length in seconds to collect data
 
 # TODO: Lots of classification parameters
 float64 label_combination_period # sec
