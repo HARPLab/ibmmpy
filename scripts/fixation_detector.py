@@ -7,8 +7,7 @@ import numpy as np
 import ibmmpy.msg
 import ibmmpy.ibmm_online
 import collections
-from ibmmpy.test import gaze_data
-from nbformat import current
+import rosbag
 
 ## Message generating/parsing
 def gaze_data_point_from_msg(msg):
@@ -88,6 +87,8 @@ class CalibratorExecutor:
         self.points.append(data)
                 
     def finish(self, parent):
+        if len(self.points) == 0:
+            return False, 'No data collected'
         data_to_fit = ibmmpy.ibmm_online._call_on_eyes_and_world(lambda l: pd.concat(l, ignore_index=True), 0, self.points)
         try:
             self.model.train(data_to_fit)
@@ -131,6 +132,17 @@ class FixationDetector:
         self.pub = rospy.Publisher('fixations', ibmmpy.msg.FixationDataPoint, queue_size=10)
         self.server.start()
         self.current_goal = None
+        
+    def calibrate(self, cal_file, cal_goal):
+        executor = CalibratorExecutor(cal_goal)
+        with rosbag.Bag(cal_file, 'r') as bag:
+            for _, msg, _ in bag.read_messages(topics=[cal_goal.topic]):
+                data = gaze_data_from_msg(msg)
+                executor.callback(msg, data)
+        res, msg = executor.finish(self)
+        if not res:
+            rospy.logwarn('Failed to perform pre-calibration: {}'.format(msg))
+        
     
     def execute(self):
         if self.current_goal:
@@ -195,6 +207,17 @@ class FixationDetector:
 def main():
     rospy.init_node("fixation_detector")
     detector = FixationDetector()
+    offline_cal_file = rospy.get_param('~calibration_file', '')
+    if offline_cal_file != '':
+        use_world = rospy.get_param('~calibration_world', False)
+        use_eye0 = rospy.get_param('~calibration_eye0', False)
+        use_eye1 = rospy.get_param('~calibration_eye1', False)
+        topic = rospy.get_param('~calibration_topic', 'gaze')
+        goal = ibmmpy.msg.DetectorGoal(topic=topic,
+                use_world=use_world, use_eye0=use_eye0, use_eye1=use_eye1)
+        rospy.loginfo('Running offline calibration from {}, goal spec {}'.format(offline_cal_file, goal))
+        detector.calibrate(offline_cal_file, goal)
+    
     rospy.spin()
     
 if __name__ == '__main__':
