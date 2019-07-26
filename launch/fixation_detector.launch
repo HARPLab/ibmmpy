@@ -1,0 +1,11 @@
+<launch>
+
+  <node pkg="ibmmpy" type="fixation_detector.py" name="fixation_detector" output="screen">
+    <param name="calibration_world" value="true" />
+    <param name="calibration_eye0" value="false" />
+    <param name="calibration_eye1" value="false" />
+    <param name="calibration_topic" value="gaze" />
+    <param name="calibration_file" value="/Volumes/UKULELE/harmonic_0.4.0_tele/p100/run/000/processed/fixations_30hz.bag" />
+  </node>
+
+</launch>

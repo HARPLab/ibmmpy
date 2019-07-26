@@ -16,7 +16,7 @@ def _call_on_eyes_and_world(func, test_id, lst):
     return out
     
 
-class EyeClassifierOnline:
+class EyeClassifierOnline(object):
     def __init__(self, detection_criteria=['world', 'eyes'], dt=None, min_fix_dur=100):
         self._classifier = ibmm.EyeClassifier()
         self._preprocess = EyeClassifierOnline._Preprocessor(self)
@@ -24,6 +24,26 @@ class EyeClassifierOnline:
         self._postprocess = EyeClassifierOnline._LabelPostprocessor()
         self._get_fixations = EyeClassifierOnline._FixationDetector(min_fix_dur)
         self.detection_criteria = detection_criteria
+        self._is_running = False
+        
+    @property
+    def dt(self):
+        return self._fuse.dt
+    @dt.setter
+    def dt(self, dt):
+        if self._is_running:
+            raise AttributeError('Cannot set dt value while ibmmpy is running. Call finish() before setting value.')
+        self._fuse.dt = dt
+        
+    @property
+    def min_fix_dur(self):
+        return self._get_fixations.min_fix_dur
+    @min_fix_dur.setter
+    def min_fix_dur(self, min_fix_dur):
+        if self._is_running:
+            raise AttributeError('Cannot set min_fix_dur value while ibmmpy is running. Call finish() before setting value.')
+        self._get_fixations.min_fix_dur = min_fix_dur
+    
         
     class _Preprocessor():
         def __init__(self, parent):
@@ -53,7 +73,7 @@ class EyeClassifierOnline:
             self._prev_raw = {'world': pd.DataFrame(), 'eyes': [ pd.DataFrame(), pd.DataFrame() ]}
         
     class _LabelFuser():
-        def __init__(self, dt, ):
+        def __init__(self, dt):
             self.dt = dt
             self._prev_raw = []
             self._last_time_cutoff = None
@@ -65,6 +85,7 @@ class EyeClassifierOnline:
             
             labels = []
             ts = []
+            cts = []
             if self._last_time_cutoff is None:
                 self._last_time_cutoff = np.min(raw_labels.timestamp)
             else:
@@ -75,7 +96,7 @@ class EyeClassifierOnline:
                 tprev = self._last_time_cutoff
                 tnext = self._last_time_cutoff + self.dt
                 selected_raw_labels = raw_labels[np.logical_and(raw_labels.timestamp >= tprev, raw_labels.timestamp < tnext)]
-                fused_label, _ = ibmm.EyeClassifier._fuse_local(selected_raw_labels)
+                fused_label, counts = ibmm.EyeClassifier._fuse_local(selected_raw_labels)
                 if fused_label is None:
                     if len(labels) > 0: # just copy the previous bc no data given
                         labels.append(labels[-1])
@@ -85,6 +106,7 @@ class EyeClassifierOnline:
                         labels.append(ibmm.EyeClassifier.LABEL_NOISE)
                 else:
                     labels.append(fused_label)
+                cts.append(counts)
                 self._last_time_cutoff += self.dt
                 ts.append(self._last_time_cutoff)
             # save the extra bits
@@ -92,7 +114,7 @@ class EyeClassifierOnline:
             if len(labels) > 0:
                 self._prev_label = labels[-1]
             
-            return pd.DataFrame({'timestamp': ts, 'label': labels})
+            return pd.concat((pd.DataFrame({'timestamp': ts, 'label': labels}), pd.DataFrame(cts)), axis=1)
         
         def reset(self):
             if len(self._prev_raw) > 0:
@@ -145,11 +167,10 @@ class EyeClassifierOnline:
             
         def __call__(self, raw_data, labels):
             data = _call_on_eyes_and_world(lambda lst: pd.concat(lst), 0, (self._prev_data, raw_data))
-            
             if len(labels) == 0:
                 # just return if no new data
                 self._prev_data = data
-                return pd.DataFrame(columns=['start_timestamp', 'duration'])
+                return pd.DataFrame(columns=['start_timestamp', 'duration']), []
             labels = pd.concat((self._prev_labels, labels))
             
             last_idx = np.argmax(labels.timestamp.values)
@@ -166,19 +187,19 @@ class EyeClassifierOnline:
             else:
                 self._prev_labels = labels.tail(1)
                 self._prev_data = _call_on_eyes_and_world(lambda d: d[0][d[0].timestamp >= labels.timestamp.values[-1]], 0, (data,))
-            fix = ibmm.EyeClassifier.get_fixations_from_labels(labels, data['world'] if 'world' in data else None, self.min_fix_dur)
+            fix, gaze_raw = ibmm.EyeClassifier.get_fixations_from_labels(labels, data['world'] if 'world' in data else None, self.min_fix_dur)
             if len(fix) > 0:
                 fix.index = fix.index + self._last_fix_id + 1
                 self._last_fix_id = fix.index.values[-1]
-            return fix
+            return fix, gaze_raw
         
         def reset(self):
-            fix = ibmm.EyeClassifier.get_fixations_from_labels(self._prev_labels, self._prev_data['world'] if 'world' in self._prev_data else None, self.min_fix_dur)
+            fix, gaze_raw = ibmm.EyeClassifier.get_fixations_from_labels(self._prev_labels, self._prev_data['world'] if 'world' in self._prev_data else None, self.min_fix_dur)
             fix.index = fix.index + self._last_fix_id + 1
             self._prev_data = {'world': pd.DataFrame(), 'eyes': [ pd.DataFrame(), pd.DataFrame() ]}
             self._prev_labels = pd.DataFrame()
             self._last_fix_id = -1
-            return fix
+            return fix, gaze_raw
                 
         
     def train(self, data):
@@ -187,6 +208,7 @@ class EyeClassifierOnline:
         self._classifier.fit(**processed_data)
     
     def classify(self, raw_point):
+        self._is_running = True
         data_filt = {k:v for k,v in raw_point.items() if k in self.detection_criteria}
         cur_vel = self._preprocess(data_filt)
         raw_labels = self._classifier.predict(fuse=False, **cur_vel)
@@ -195,14 +217,15 @@ class EyeClassifierOnline:
 #         print('fused labels: {}'.format(processed_labels))
         postprocessed_labels = self._postprocess(processed_labels)
 #         print('postprocessed labels: {}'.format(postprocessed_labels))
-        fix = self._get_fixations(raw_point, postprocessed_labels)
-        return fix
+        fix, gaze_raw = self._get_fixations(raw_point, postprocessed_labels)
+        return fix, gaze_raw
     
     def finish(self):
         self._preprocess.reset()
         last_processed = self._fuse.reset()
         last_postprocessed = pd.concat((self._postprocess(last_processed), self._postprocess.reset()), sort=False)
         last_fix = pd.concat((self._get_fixations( {'world': pd.DataFrame(), 'eyes': [ pd.DataFrame(), pd.DataFrame() ]}, last_postprocessed), self._get_fixations.reset()), sort=False)
+        self._is_running = False
         return last_fix
                 
                                         

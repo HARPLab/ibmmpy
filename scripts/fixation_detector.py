@@ -22,19 +22,24 @@ def gaze_data_from_msg(msg):
         'eyes': [pd.DataFrame([gaze_data_point_from_msg(m) for m in msg.eye0_data]),
                  pd.DataFrame([gaze_data_point_from_msg(m) for m in msg.eye1_data])]
         }
-    
-def point_msg_from_fixation(fix):
+
+def msg_from_gaze_data_point(data):
+    msg = ibmmpy.msg.GazeDataPoint(confidence=data.confidence)
+    msg.position.x = data.x
+    msg.position.y = data.y
+    msg.header.stamp = rospy.Time.from_sec(data.timestamp)
+    return msg
+
+def point_msg_from_fixation(fix, raw_data):
     return ibmmpy.msg.FixationDataPoint(
         id = fix.Index,
         start_timestamp = rospy.Time.from_sec(fix.start_timestamp),
         duration = fix.duration,
         x_center = fix.x,
-        y_center = fix.y
+        y_center = fix.y,
+        raw_data = [msg_from_gaze_data_point(d) for d in raw_data.itertuples()]
         )
     
-def msg_from_fixations(fix):
-    return ibmmpy.msg.FixationData(fixations = [point_msg_from_fixation(f) for f in fix.itertuples()])
-
 ## Termination conditions
 class EndTime:
     def __init__(self, goal):
@@ -80,7 +85,7 @@ class CalibratorExecutor:
             self.detection_criteria.append('world')
         if goal.use_eye0:
             self.detection_criteria.append('eyes')
-        self.model = ibmmpy.ibmm_online.EyeClassifierOnline(dt=goal.label_combination_period, detection_criteria=self.detection_criteria, min_fix_dur=goal.min_fix_duration*1e3)
+        self.model = ibmmpy.ibmm_online.EyeClassifierOnline(dt=goal.label_combination_period, detection_criteria=self.detection_criteria, min_fix_dur=goal.min_fix_duration)
 
         
     def callback(self, msg, data):
@@ -100,20 +105,22 @@ class CalibratorExecutor:
         
     
 class DetectorExecutor:
-    def __init__(self, model, pub):
+    def __init__(self, current_goal, model, pub):
         self.model = model
+        self.model.dt = current_goal.label_combination_period
+        self.model.min_fix_dur = current_goal.min_fix_duration
         self.pub = pub
         
     def callback(self, msg, data):
-        fix = self.model.classify(data)
-        self.publish(fix, msg.header.stamp)
+        fix, raw_gaze = self.model.classify(data)
+        self.publish(fix, raw_gaze, msg.header.stamp)
         cur_time = rospy.get_rostime()
         if (cur_time > msg.header.stamp + rospy.Duration(0.5)):
             rospy.logwarn('Processing delay is {}'.format(cur_time - msg.header.stamp))
             
-    def publish(self, fix, tm):
-        for f in fix.itertuples():
-            msg = point_msg_from_fixation(f) 
+    def publish(self, fix, raw_data, tm):
+        for f, r in zip(fix.itertuples(), raw_data):
+            msg = point_msg_from_fixation(f, r) 
             msg.header.stamp = tm
             self.pub.publish(msg)
             
@@ -126,12 +133,15 @@ class DetectorExecutor:
 class FixationDetector:
     WATCHDOG_DURATION = rospy.Duration(1.0)
     def __init__(self):
-        self.server = actionlib.SimpleActionServer('detect', ibmmpy.msg.DetectorAction, None, False)
+        self.server = actionlib.SimpleActionServer('~detect', ibmmpy.msg.DetectorAction, None, False)
         self.server.register_goal_callback(self.execute)
         self.model = None
-        self.pub = rospy.Publisher('fixations', ibmmpy.msg.FixationDataPoint, queue_size=10)
+        self.pub = rospy.Publisher('~fixations', ibmmpy.msg.FixationDataPoint, queue_size=10)
+        
+    def start(self):
         self.server.start()
         self.current_goal = None
+        rospy.loginfo('Waiting for goal message')
         
     def calibrate(self, cal_file, cal_goal):
         executor = CalibratorExecutor(cal_goal)
@@ -162,7 +172,7 @@ class FixationDetector:
                 self.server.set_aborted(None, 'Must calibrate the detector before calibration')
                 return
             else:
-                self.executor = DetectorExecutor(self.model, self.pub)
+                self.executor = DetectorExecutor(current_goal, self.model, self.pub)
         else:
             self.server.set_aborted(None, 'Unknown action requested: {}'.format(current_goal.action))
             return
@@ -217,7 +227,8 @@ def main():
                 use_world=use_world, use_eye0=use_eye0, use_eye1=use_eye1)
         rospy.loginfo('Running offline calibration from {}, goal spec {}'.format(offline_cal_file, goal))
         detector.calibrate(offline_cal_file, goal)
-    
+        
+    detector.start()
     rospy.spin()
     
 if __name__ == '__main__':

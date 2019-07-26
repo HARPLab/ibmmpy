@@ -31,6 +31,7 @@ add_message_files(
   GazeDataPoint.msg
   GazeData.msg
   FixationDataPoint.msg
+  LabelData.msg
 )
 
 add_action_files(
@@ -45,5 +46,6 @@ generate_messages(
     actionlib_msgs
 )
 # Set up the ROS Catkin package settings.
-catkin_package()
+catkin_package(
+    CATKIN_DEPENDS message_runtime std_msgs geometry_msgs actionlib_msgs)
  

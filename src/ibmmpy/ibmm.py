@@ -307,7 +307,7 @@ class EyeClassifier:
 #         is_fix = np.logical_or(labels.label.values == EyeClassifier.LABEL_FIX,
 #                                 labels.label.values == EyeClassifier.LABEL_NOISE).astype(np.int8)
         if len(labels) < 2:
-            return pd.DataFrame({ 'start_timestamp': [], 'duration': []})
+            return pd.DataFrame({ 'start_timestamp': [], 'duration': []}), []
 
         is_fix = (labels.label.values == EyeClassifier.LABEL_FIX).astype(np.int8)
         fix_change = is_fix[1:] - is_fix[:-1]
@@ -345,21 +345,21 @@ class EyeClassifier:
 
         fix = pd.DataFrame({ 'start_timestamp': labels.timestamp.values[fix_start], 'duration': (labels.timestamp.values[fix_end] - labels.timestamp.values[fix_start]) * 1000. })
 
-
         #Filter out too-short fixations
         if min_fix_dur is not None:
             fix = fix.loc[fix.duration >= min_fix_dur, :]
             fix.index = np.arange(len(fix))
         if gaze_data is not None:
-            m_x = [ np.mean( gaze_data.x[np.logical_and(gaze_data.timestamp.values >= r.start_timestamp,
-                                                                       gaze_data.timestamp.values <= r.start_timestamp + .001*r.duration)] )
-                   for r in fix.itertuples() ]
-            m_y = [ np.mean( gaze_data.y[np.logical_and(gaze_data.timestamp.values >= r.start_timestamp,
-                                                                       gaze_data.timestamp.values <= r.start_timestamp + .001*r.duration)] )
-                   for r in fix.itertuples() ]
+            gaze_raw = [gaze_data.loc[np.logical_and(gaze_data.timestamp.values >= r.start_timestamp,
+                                                                       gaze_data.timestamp.values <= r.start_timestamp + .001*r.duration), ['timestamp', 'confidence', 'x','y']]
+                        for r in fix.itertuples()]
+            m_x = [ np.mean( raw.x ) for raw in gaze_raw ]
+            m_y = [ np.mean( raw.y ) for raw in gaze_raw ]
             fix = fix.assign(x=m_x, y=m_y)
+        else:
+            gaze_raw = [pd.DataFrame()] * len(fix)
         fix.index.name = 'id'
-        return fix
+        return fix, gaze_raw
     
     def get_fixations(self, eyes=None, world=None, ts=None, dt=None, gaze_data=None, min_fix_dur=100):
         if ts is None and dt is None and gaze_data is not None:
