@@ -1,5 +1,8 @@
 <launch>
 
+  <arg name="visualize" default="false" />
+  <arg name="camera_name" default="ego_video" />
+
   <node pkg="ibmmpy" type="fixation_detector.py" name="fixation_detector" output="screen">
     <param name="calibration_world" value="true" />
     <param name="calibration_eye0" value="false" />
@@ -7,5 +10,18 @@
     <param name="calibration_topic" value="gaze" />
     <param name="calibration_file" value="/Volumes/UKULELE/harmonic_0.4.0_tele/p100/run/000/processed/fixations_30hz.bag" />
   </node>
-
+  
+  <group if="$(arg visualize)">
+  
+      <node pkg="ibmmpy" type="fixation_visualizer.py" name="fixation_visualizer" output="screen">
+        <remap from="/raw_image" to="/ego_video" />
+        <param name="image_subtopic" value="image_raw" />
+        <param name="fixation_topic" value="/fixation_detector/fixations" />
+      </node>
+    
+      <node pkg="image_view" type="image_view" name="fixation_image_view">
+        <remap from="image" to="fixation_visualizer/image_overlay" />
+      </node>
+  </group>
+  
 </launch>
