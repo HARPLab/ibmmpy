@@ -315,7 +315,7 @@ class EyeClassifier:
 #         is_fix = np.logical_or(labels.label.values == EyeClassifier.LABEL_FIX,
 #                                 labels.label.values == EyeClassifier.LABEL_NOISE).astype(np.int8)
         if len(labels) < 2:
-            return pd.DataFrame({ 'start_timestamp': [], 'duration': []}), []
+            return pd.DataFrame([], columns=['start_timestamp', 'duration']), []
 
         is_fix = (labels.label.values == EyeClassifier.LABEL_FIX).astype(np.int8)
         fix_change = is_fix[1:] - is_fix[:-1]
