@@ -224,7 +224,9 @@ class EyeClassifierOnline(object):
         self._preprocess.reset()
         last_processed = self._fuse.reset()
         last_postprocessed = pd.concat((self._postprocess(last_processed), self._postprocess.reset()), sort=False)
-        last_fix = pd.concat((self._get_fixations( {'world': pd.DataFrame(), 'eyes': [ pd.DataFrame(), pd.DataFrame() ]}, last_postprocessed), self._get_fixations.reset()), sort=False)
+        last_fix1, last_raw1 = self._get_fixations( {'world': pd.DataFrame(), 'eyes': [ pd.DataFrame(), pd.DataFrame() ]}, last_postprocessed)
+        last_fix2, last_raw2 = self._get_fixations.reset()
+        last_fix = pd.concat((last_fix1, last_fix2), sort=False)
         self._is_running = False
         return last_fix
                 

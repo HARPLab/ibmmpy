@@ -216,29 +216,37 @@ class EyeClassifier:
             timestamp -- ts or times generated from dt
             label -- the fused labels
         """
-        if ts is None:
+        if ts is None and dt is not None:
             ts = np.arange( labels.timestamp.values[0], labels.timestamp.values[-1], dt)
             if ts[-1] < labels.timestamp.values[-1]:
                 ts = np.hstack((ts, labels.timestamp.values[-1]))
-        fused_labels = np.full(ts.shape, EyeClassifier.LABEL_NOISE, dtype=np.int8)
-        cts_sac = np.zeros(ts.shape, dtype=np.int8)
-        cts_fix = np.zeros(ts.shape, dtype=np.int8)
-        cts_nse = np.zeros(ts.shape, dtype=np.int8)
-        for idx in range(ts.size):
-            tprev = ts[idx-1] if idx > 0 else -np.inf
-            tnext = ts[idx]
-            cur_labels = labels[np.logical_and(labels.timestamp >= tprev, labels.timestamp < tnext)]
-            
-            label, cts = EyeClassifier._fuse_local(cur_labels)
-            
-            cts_sac[idx] = cts['ct_sac']
-            cts_fix[idx] = cts['ct_fix']
-            cts_nse[idx] = cts['ct_nse']
-            
-            if label is not None:
-                fused_labels[idx] = label
-            elif idx > 0:
-                fused_labels[idx] = fused_labels[idx-1]
+        if ts is not None:
+            fused_labels = np.full(ts.shape, EyeClassifier.LABEL_NOISE, dtype=np.int8)
+            cts_sac = np.zeros(ts.shape, dtype=np.int8)
+            cts_fix = np.zeros(ts.shape, dtype=np.int8)
+            cts_nse = np.zeros(ts.shape, dtype=np.int8)
+            for idx in range(ts.size):
+                tprev = ts[idx-1] if idx > 0 else -np.inf
+                tnext = ts[idx]
+                cur_labels = labels[np.logical_and(labels.timestamp >= tprev, labels.timestamp < tnext)]
+                
+                label, cts = EyeClassifier._fuse_local(cur_labels)
+                
+                cts_sac[idx] = cts['ct_sac']
+                cts_fix[idx] = cts['ct_fix']
+                cts_nse[idx] = cts['ct_nse']
+                
+                if label is not None:
+                    fused_labels[idx] = label
+                elif idx > 0:
+                    fused_labels[idx] = fused_labels[idx-1]
+        else:
+            sorted_idx = np.argsort(labels.timestamp.values)
+            ts = labels.timestamp.values[sorted_idx]
+            fused_labels = labels.label.values[sorted_idx]
+            cts_fix = (fused_labels == EyeClassifier.LABEL_FIX).astype(np.int8)
+            cts_sac = (fused_labels == EyeClassifier.LABEL_SAC).astype(np.int8)
+            cts_nse = (fused_labels == EyeClassifier.LABEL_NOISE).astype(np.int8)
             
         # Fix length-one holes
         fused_labels = EyeClassifier.postprocess(fused_labels)
@@ -342,8 +350,9 @@ class EyeClassifier:
         fix_start = fix_start[ok_idx]
         fix_end = fix_end[ok_idx]
         
-
-        fix = pd.DataFrame({ 'start_timestamp': labels.timestamp.values[fix_start], 'duration': (labels.timestamp.values[fix_end] - labels.timestamp.values[fix_start]) * 1000. })
+        fix = pd.DataFrame( np.column_stack((labels.timestamp.values[fix_start], 
+                            (labels.timestamp.values[fix_end] - labels.timestamp.values[fix_start])* 1000.)), 
+                           columns=['start_timestamp', 'duration'])
 
         #Filter out too-short fixations
         if min_fix_dur is not None:

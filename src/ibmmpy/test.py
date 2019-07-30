@@ -58,9 +58,6 @@ def test2():
     online_processor = EyeClassifierOnline(dt=0.05, detection_criteria=['eyes'])
     online_processor.train({'eyes': (synth_data0, synth_data1)})
     
-    def get_filtered_subset(min_tm, max_tm):
-        return 
-    
     dt = 0.01
     fix = []
     for t in np.arange(100, 101, dt):
