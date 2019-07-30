@@ -8,10 +8,10 @@ import os
 import argparse
 import itertools
 
-def compare_equals(d1, d2):
+def compare_equals(d1, d2, **kwargs):
     return d1.equals(d2)
 
-def compare_intersection_over_union(d1, d2):
+def compare_intersection_over_union(d1, d2, **kwargs):
     # get sorted intervals
     d1 = d1.iloc[np.argsort(d1.start_timestamp),:]
     d2 = d2.iloc[np.argsort(d2.start_timestamp),:]
@@ -46,6 +46,21 @@ def compare_intersection_over_union(d1, d2):
     
     return intersection / union
 
+def compare_iou(d1, d2, label_dt, **kwargs):
+    # this is a terrible way to do it efficiency-wise but it's much simpler to read so yay
+    all_ts = np.vstack((d1.start_timestamp, d1.start_timestamp+d1.duration*1e-3,
+                        d2.start_timestamp, d2.start_timestamp+d2.duration*1e-3))
+    ts = np.arange(np.min(all_ts), np.max(all_ts), label_dt)
+    
+    l1 = np.zeros(ts.shape, dtype=np.bool)
+    for f in d1.itertuples():
+        l1[np.logical_and(ts >= f.start_timestamp, ts < f.start_timestamp*f.duration*1e-3)] = 1
+    l2 = np.zeros(ts.shape, dtype=np.bool)
+    for f in d2.itertuples():
+        l2[np.logical_and(ts >= f.start_timestamp, ts < f.start_timestamp*f.duration*1e-3)] = 1
+        
+    return float(np.count_nonzero(np.logical_and(l1, l2))) / np.count_nonzero(np.logical_or(l1, l2))
+        
 
 def run_offline(data, seed=None, online_dt=None, label_dt=None, data_dir=None, fix_data=['world', 'eyes'], params={}):
     if seed:
@@ -78,7 +93,6 @@ def run_online(data, seed=None, online_dt=0.1, label_dt=None, data_dir=None, fix
         return get_subset
     all_fix2 = [class2.classify(ibmmpy.ibmm_online._call_on_eyes_and_world(get_subset_fcn(t, t+online_dt), 0, [data]))[0] for t in np.arange(min_tm, max_tm, online_dt)]
     all_fix2.append(class2.finish())
-    print(all_fix2)
     fix2 = pd.concat(all_fix2, sort=False) 
     return fix2
 
@@ -92,9 +106,11 @@ def run_disk(data, data_dir=None, **kwargs):
                          'y': fix.norm_pos_x},
                         columns=['start_timestamp', 'duration', 'x', 'y'])
 
-def compare(fix, metric=compare_equals):
+def compare(fix, metrics, params):
     for k1, k2 in itertools.combinations(fix.keys(), 2):
-        print('==========\n{} <--> {}: {}'.format(k1, k2, metric(fix[k1], fix[k2])))
+        print('==========\n{} <--> {}:'.format(k1, k2))
+        for n, m, in metrics.iteritems():
+            print('\t{}: {}'.format(n, m(fix[k1], fix[k2], **params)))
 
 eval_methods = {
     'offline': run_offline,
@@ -102,10 +118,16 @@ eval_methods = {
     'disk': run_disk
 }
 
+metrics = {
+    'equal': compare_equals,
+    'iou': compare_iou
+    }
+
 def main():
     parser = argparse.ArgumentParser('Testing and validation for ibmmpy online method')
     parser.add_argument('data_dir', nargs='?', default=None, help='Data directory to use (default: use generated test data')
-    parser.add_argument('--methods', nargs='+', default=['offline', 'online'], help='Methods to use')
+    parser.add_argument('--methods', nargs='+', default=['offline', 'online'], choices=eval_methods.keys(), help='Methods to use')
+    parser.add_argument('--metrics', nargs='+', default=['equal'], choices=metrics.keys(), help='Metrics to use')
     parser.add_argument('--seed', default=None, type=int, help='Random seed to use (default: don\'t set)')
     parser.add_argument('--online-dt', default=0.1, type=float, help='Sample bunching rate for online data')
     parser.add_argument('--label-dt', default=None, type=float, help='Sample bunching rate for label voting')
@@ -157,7 +179,7 @@ def main():
     for k, v in all_fix.items():
         print('==== {} =====\n{}'.format(k, v))
     
-    compare(all_fix)
+    compare(all_fix, {n: metrics[n] for n in args.metrics}, params)
     
 if __name__ == '__main__':
 #     a = pd.DataFrame([[0, 100.], [1, 100.], [2, 100.], [3, 100]], columns=['start_timestamp', 'duration'])
