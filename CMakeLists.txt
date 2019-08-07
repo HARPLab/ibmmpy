@@ -31,7 +31,7 @@ add_message_files(
   GazeDataPoint.msg
   GazeData.msg
   FixationDataPoint.msg
-  LabelData.msg
+#  LabelData.msg
 )
 
 add_action_files(
