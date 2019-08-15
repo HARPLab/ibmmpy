@@ -121,7 +121,7 @@ class EyeClassifierOnline(object):
                 fused_labels, _ = ibmm.EyeClassifier._fuse_local(self._prev_raw)
                 final_data = pd.DataFrame({'timestamp': [np.max(self._prev_raw.timestamp)], 'label': fused_labels if fused_labels is not None else ibmm.EyeClassifier.LABEL_NOISE})
             else:
-                final_data = pd.DataFrame()
+                final_data = pd.DataFrame([], columns=['timestamp', 'label'])
             self._prev_raw = []
             self._last_time_cutoff = None
             return final_data
@@ -228,7 +228,9 @@ class EyeClassifierOnline(object):
         last_fix1, last_raw1 = self._get_fixations( {'world': pd.DataFrame(), 'eyes': [ pd.DataFrame(), pd.DataFrame() ]}, last_postprocessed)
         last_fix2, last_raw2 = self._get_fixations.reset()
         last_fix = pd.concat((last_fix1, last_fix2), sort=False)
+        last_raw1.extend(last_raw2)
         self._is_running = False
-        return last_fix
+        return last_fix, last_raw1
                 
                                         
+

@@ -110,7 +110,7 @@ class DetectorExecutor:
         self.model.dt = current_goal.label_combination_period
         self.model.min_fix_dur = current_goal.min_fix_duration
         self.pub = pub
-        
+
     def callback(self, msg, data):
         fix, raw_gaze = self.model.classify(data)
         self.publish(fix, raw_gaze, msg.header.stamp)
@@ -125,8 +125,8 @@ class DetectorExecutor:
             self.pub.publish(msg)
             
     def finish(self, parent):
-        fix = self.model.finish()
-        self.publish(fix, rospy.get_rostime())
+        fix, raw = self.model.finish()
+        self.publish(fix, raw, rospy.get_rostime())
         return True, ''
     
 # Overall execution
@@ -169,7 +169,7 @@ class FixationDetector:
             self.executor = CalibratorExecutor(current_goal)
         elif current_goal.action == ibmmpy.msg.DetectorGoal.ACTION_DETECT:
             if self.model is None:
-                self.server.set_aborted(None, 'Must calibrate the detector before calibration')
+                self.server.set_aborted(None, 'Must calibrate the detector before running!')
                 return
             else:
                 self.executor = DetectorExecutor(current_goal, self.model, self.pub)
@@ -182,7 +182,6 @@ class FixationDetector:
         self.timer = rospy.Timer(FixationDetector.WATCHDOG_DURATION, self._timer_callback, oneshot=False)
         self.terminator = get_terminator(self.current_goal)
         self.last_active_time = rospy.get_rostime()
-    
     def _callback(self, msg):
         data = gaze_data_from_msg(msg)
         self.executor.callback(msg, data)
@@ -193,6 +192,7 @@ class FixationDetector:
         
     def _timer_callback(self, msg):
         if self.server.is_preempt_requested() or self.terminator(msg, None):
+            rospy.loginfo('Termination condition reached.')
             self.finish()
         elif self.last_active_time is None or (msg.last_real and self.last_active_time <= msg.last_real):
             rospy.logwarn('No gaze data received from {} for at least {} s'.format(self.current_goal.topic, self.timer._period.to_sec()))
