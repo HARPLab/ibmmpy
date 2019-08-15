@@ -226,8 +226,8 @@ class EyeClassifier:
             cts_fix = np.zeros(ts.shape, dtype=np.int8)
             cts_nse = np.zeros(ts.shape, dtype=np.int8)
             for idx in range(ts.size):
-                tprev = ts[idx-1] if idx > 0 else -np.inf
-                tnext = ts[idx]
+                tprev = ts[idx] 
+                tnext = ts[idx+1] if idx < ts.size-1 else np.inf
                 cur_labels = labels[np.logical_and(labels.timestamp >= tprev, labels.timestamp < tnext)]
                 
                 label, cts = EyeClassifier._fuse_local(cur_labels)

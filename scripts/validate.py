@@ -49,20 +49,23 @@ def compare_intersection_over_union(d1, d2, **kwargs):
 def compare_iou(d1, d2, label_dt, **kwargs):
     # this is a terrible way to do it efficiency-wise but it's much simpler to read so yay
     all_ts = np.vstack((d1.start_timestamp, d1.start_timestamp+d1.duration*1e-3,
-                        d2.start_timestamp, d2.start_timestamp+d2.duration*1e-3))
-    ts = np.arange(np.min(all_ts), np.max(all_ts), label_dt)
+                        d2.start_timestamp, d2.start_timestamp+d2.duration*1e-3)).ravel()
+    if label_dt:
+        ts = np.arange(np.min(all_ts), np.max(all_ts), label_dt)
+    else:
+        ts = np.linspace(np.min(all_ts), np.max(all_ts), 5000)
     
     l1 = np.zeros(ts.shape, dtype=np.bool)
     for f in d1.itertuples():
-        l1[np.logical_and(ts >= f.start_timestamp, ts < f.start_timestamp*f.duration*1e-3)] = 1
+        l1[np.logical_and(ts >= f.start_timestamp, ts < f.start_timestamp+f.duration*1e-3)] = 1
     l2 = np.zeros(ts.shape, dtype=np.bool)
     for f in d2.itertuples():
-        l2[np.logical_and(ts >= f.start_timestamp, ts < f.start_timestamp*f.duration*1e-3)] = 1
-        
+        l2[np.logical_and(ts >= f.start_timestamp, ts < f.start_timestamp+f.duration*1e-3)] = 1
+                
     return float(np.count_nonzero(np.logical_and(l1, l2))) / np.count_nonzero(np.logical_or(l1, l2))
         
 
-def run_offline(data, seed=None, online_dt=None, label_dt=None, data_dir=None, fix_data=['world', 'eyes'], params={}):
+def run_offline(data, seed=None, online_dt=None, label_dt=None, data_dir=None, fix_data=['world', 'eyes'], params={}, verbose=False, **kwargs):
     if seed:
         np.random.seed(seed)
     
@@ -73,7 +76,7 @@ def run_offline(data, seed=None, online_dt=None, label_dt=None, data_dir=None, f
     fix1 = class1.get_fixations(dt=label_dt, gaze_data=data['world'] if 'world' in data else None, **fix_eval_data)[0]
     return fix1
 
-def run_online(data, seed=None, online_dt=0.1, label_dt=None, data_dir=None, fix_data=['world', 'eyes'], params={}):
+def run_online(data, seed=None, online_dt=0.1, label_dt=None, data_dir=None, fix_data=['world', 'eyes'], params={}, **kwargs):
     # capture online
     if seed:
         np.random.seed(seed)
@@ -133,6 +136,7 @@ def main():
     parser.add_argument('--label-dt', default=None, type=float, help='Sample bunching rate for label voting')
     parser.add_argument('--world-only', default=False, action='store_true', help='use world data only for detection')
     parser.add_argument('--eyes-only', default=False, action='store_true', help='use eye data only for detection')
+    parser.add_argument('--verbose', '-v',  default=False, action='store_true', help='print verbose output')
     args = parser.parse_args()
     
     if args.data_dir is None:
@@ -167,7 +171,8 @@ def main():
     params = {'seed': args.seed,
                    'online_dt': args.online_dt,
                    'label_dt': args.label_dt,
-                   'data_dir': args.data_dir}
+                   'data_dir': args.data_dir,
+                   'verbose': args.verbose}
     if args.world_only:
         params['fix_data'] = ['world']
     elif args.eyes_only:

@@ -211,6 +211,7 @@ class EyeClassifierOnline(object):
         self._is_running = True
         data_filt = {k:v for k,v in raw_point.items() if k in self.detection_criteria}
         cur_vel = self._preprocess(data_filt)
+#         print('velocity: {}'.format(cur_vel))
         raw_labels = self._classifier.predict(fuse=False, **cur_vel)
 #         print('raw labels: {}'.format(raw_labels))
         processed_labels = self._fuse(raw_labels)
