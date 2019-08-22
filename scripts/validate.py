@@ -108,6 +108,20 @@ def run_disk(data, data_dir=None, **kwargs):
                          'x': fix.norm_pos_x,
                          'y': fix.norm_pos_x},
                         columns=['start_timestamp', 'duration', 'x', 'y'])
+    
+def run_bag(data, data_dir=None, bag_file=None, **kwargs):
+    bag_file = bag_file or os.path.join(data_dir, 'processed', 'fixations.bag')
+    import rosbag
+    import ibmmpy.msg
+    
+    fix = []
+    with rosbag.Bag(bag_file, 'r') as bag:
+        for _, msg, _ in bag.read_messages(topics=['/fixation_detector/fixations']):
+            fix.append({'start_timestamp': msg.start_timestamp.to_sec(),
+                        'duration': msg.duration,
+                        'x': msg.x,
+                        'y': msg.y})
+    return pd.DataFrame(fix)
 
 def compare(fix, metrics, params):
     for k1, k2 in itertools.combinations(fix.keys(), 2):
@@ -137,6 +151,7 @@ def main():
     parser.add_argument('--world-only', default=False, action='store_true', help='use world data only for detection')
     parser.add_argument('--eyes-only', default=False, action='store_true', help='use eye data only for detection')
     parser.add_argument('--verbose', '-v',  default=False, action='store_true', help='print verbose output')
+    parser.add_argument('--bag-file', default=None, help='location of bag file with fixations to read (default: processed/fixations.bag)')
     args = parser.parse_args()
     
     if args.data_dir is None:
@@ -172,7 +187,8 @@ def main():
                    'online_dt': args.online_dt,
                    'label_dt': args.label_dt,
                    'data_dir': args.data_dir,
-                   'verbose': args.verbose}
+                   'verbose': args.verbose,
+                   'bag_file': args.bag_file}
     if args.world_only:
         params['fix_data'] = ['world']
     elif args.eyes_only:
