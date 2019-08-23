@@ -9,7 +9,7 @@ import argparse
 import itertools
 
 def compare_equals(d1, d2, **kwargs):
-    return d1.equals(d2)
+    return np.allclose(d1.values, d2.loc[:, d1.columns].values)
 
 def compare_intersection_over_union(d1, d2, **kwargs):
     # get sorted intervals
@@ -48,7 +48,8 @@ def compare_intersection_over_union(d1, d2, **kwargs):
 
 def compare_iou(d1, d2, label_dt, **kwargs):
     # this is a terrible way to do it efficiency-wise but it's much simpler to read so yay
-    all_ts = np.vstack((d1.start_timestamp, d1.start_timestamp+d1.duration*1e-3,
+    print('time shape: {}, {}'.format(d1.start_timestamp.shape, d2.start_timestamp.shape))
+    all_ts = np.hstack((d1.start_timestamp, d1.start_timestamp+d1.duration*1e-3,
                         d2.start_timestamp, d2.start_timestamp+d2.duration*1e-3)).ravel()
     if label_dt:
         ts = np.arange(np.min(all_ts), np.max(all_ts), label_dt)
@@ -95,7 +96,8 @@ def run_online(data, seed=None, online_dt=0.1, label_dt=None, data_dir=None, fix
             return (data[0])[np.logical_and((data[0]).timestamp >= tmin, (data[0]).timestamp < tmax)]
         return get_subset
     all_fix2 = [class2.classify(ibmmpy.ibmm_online._call_on_eyes_and_world(get_subset_fcn(t, t+online_dt), 0, [data]))[0] for t in np.arange(min_tm, max_tm, online_dt)]
-    all_fix2.append(class2.finish())
+    all_fix2.append(class2.finish()[0])
+    print(all_fix2)
     fix2 = pd.concat(all_fix2, sort=False) 
     return fix2
 
@@ -110,6 +112,8 @@ def run_disk(data, data_dir=None, **kwargs):
                         columns=['start_timestamp', 'duration', 'x', 'y'])
     
 def run_bag(data, data_dir=None, bag_file=None, **kwargs):
+    if not bag_file and not data_dir:
+        raise ValueError('For bag method, must specify either data dir or bag file')
     bag_file = bag_file or os.path.join(data_dir, 'processed', 'fixations.bag')
     import rosbag
     import ibmmpy.msg
@@ -119,8 +123,8 @@ def run_bag(data, data_dir=None, bag_file=None, **kwargs):
         for _, msg, _ in bag.read_messages(topics=['/fixation_detector/fixations']):
             fix.append({'start_timestamp': msg.start_timestamp.to_sec(),
                         'duration': msg.duration,
-                        'x': msg.x,
-                        'y': msg.y})
+                        'x': msg.x_center,
+                        'y': msg.y_center})
     return pd.DataFrame(fix)
 
 def compare(fix, metrics, params):
@@ -132,7 +136,8 @@ def compare(fix, metrics, params):
 eval_methods = {
     'offline': run_offline,
     'online': run_online,
-    'disk': run_disk
+    'disk': run_disk,
+    'bag': run_bag
 }
 
 metrics = {
@@ -197,8 +202,9 @@ def main():
         params['fix_data'] = ['world', 'eyes']
     
     all_fix = { method: eval_methods[method](data, **params) for method in args.methods }
+    ref_time = all_fix.values()[0].start_timestamp[0]
     for k, v in all_fix.items():
-        print('==== {} =====\n{}'.format(k, v))
+        print('==== {} =====\n{}'.format(k, v.assign(start_timestamp=v.start_timestamp-ref_time)))
     
     compare(all_fix, {n: metrics[n] for n in args.metrics}, params)
     
