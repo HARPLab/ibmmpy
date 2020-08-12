@@ -8,87 +8,133 @@ import sensor_msgs.msg
 import ibmmpy.msg
 import fixation_detector
 
+
 def get_fixation_from_point_msg(msg):
+    if not isinstance(msg.id, int):
+        print('unexpected msg type: {}'.format(type(msg.id)))
+        print(msg)
+        raise Exception
     return pd.DataFrame({
         'id': msg.id,
         'start_timestamp': msg.start_timestamp.to_sec(),
         'duration': msg.duration,
         'x_center': msg.x_center,
         'y_center': msg.y_center
-        }, index=[0]
-        )
+        }, index=[msg.id]
+        ).dropna()
     
 
 class FixationVisualizer:
+    __COLORS__ = ( (0, 0, 255), (0, 255, 0), (255, 0, 0), (255, 255, 0), (255, 0, 255), (0, 255, 255) )
+    __UNUSED_COLOR__ = ( 192, 192, 192 )
+    __GAZE_RADIUS__ = 5
+    __FIX_RADIUS__ = 15
+    __LINGER_COUNT__ = len(__COLORS__)
+    __MAX_PUB_PERIOD__ = rospy.Duration(0.1)
+
     def __init__(self, 
                  image_topic='/image',
                  image_subtopic='image_raw',
                  fixation_topic='/fixations',
-                 gaze_topic='/gaze',
-                 gaze_color=(255, 255, 0), gaze_radius=5, 
-                 fix_color=(255, 0, 0), fix_radius=15, linger_time=5):
-        self.gaze_color = gaze_color
-        self.gaze_radius = gaze_radius
+                 gaze_topic='/gaze'):
         
-        self.fix_color = fix_color
-        self.fix_radius_scale = fix_radius # pixel radius / sec 
-        
-        self.linger_time = linger_time # sec    
         self.cam_info = None
         
         self.fixations = pd.DataFrame()
         self.raw_data = pd.DataFrame()
         
         self.bridge = cv_bridge.CvBridge()
-        self.cam_info_sub = rospy.Subscriber(image_topic + '/camera_info', sensor_msgs.msg.CameraInfo, self._cam_info_callback)
-        self.image_sub = rospy.Subscriber(image_topic + '/' + image_subtopic, sensor_msgs.msg.Image, self._frame_callback)
+
+        if image_topic is not None:
+            self.cam_info_sub = rospy.Subscriber(image_topic + '/camera_info', sensor_msgs.msg.CameraInfo, self._cam_info_callback)
+            self.image_sub = rospy.Subscriber(image_topic + '/' + image_subtopic, sensor_msgs.msg.Image, self._frame_callback)
+            self._last_image = None
+        else:
+            self.cam_info = sensor_msgs.msg.CameraInfo(height=768, width=1024)
+            self.timer = rospy.Timer(rospy.Duration.from_sec(0.1), self._timer_callback, oneshot=False)
+            self._last_image = np.zeros((self.cam_info.height, self.cam_info.width, 3), dtype=np.uint8)
+        
         self.fix_sub = rospy.Subscriber(fixation_topic, ibmmpy.msg.FixationDataPoint, self._fix_callback)
         self.gaze_sub = rospy.Subscriber(gaze_topic, ibmmpy.msg.GazeData, self._gaze_callback)
         self.image_pub = rospy.Publisher('~image_overlay', sensor_msgs.msg.Image, queue_size=1)
+
+        self._last_time = None
+        self._last_pub_time = None
         
-    def draw_fixation(self, frame, fix, cur_time):
-        time_since_start = cur_time - fix.start_timestamp
-        if time_since_start > fix.duration * 1e-3 + self.linger_time:
-            return False
-        if np.isnan(fix.x_center) or np.isnan(fix.y_center):
-            return False
-        
-        radius = int(self.fix_radius_scale * min(time_since_start, fix.duration * 1e-3))
-        rospy.loginfo('[{}] time dif: {}, dur: {}, radius: {}'.format(fix.Index, time_since_start, fix.duration, radius))
-        if radius > 0:
+    def draw_fixations(self, frame, fixations):
+        for fix in fixations.itertuples():
             pos = (int(fix.x_center * self.cam_info.width), int( (1-fix.y_center) * self.cam_info.height ) )
-            cv2.circle(frame, pos, radius, self.fix_color, -1)
-        return True
-    
-    def draw_raw_gaze(self, frame, raw_data, cur_time):
-        time_since_start = cur_time - raw_data.timestamp
-        if time_since_start > self.linger_time:
-            return False
-        if np.isnan(raw_data.x) or np.isnan(raw_data.y):
-            return False
-        
-        pos = (int(raw_data.x * self.cam_info.width), int( (1-raw_data.y) * self.cam_info.height ) )
-        cv2.circle(frame, pos, self.gaze_radius, self.gaze_color, -1)
-        return True
+            color = FixationVisualizer.__COLORS__[ fix.id % len(FixationVisualizer.__COLORS__) ]
+            cv2.circle(frame, pos, FixationVisualizer.__FIX_RADIUS__, color, 3)
+            
+    def draw_raw_gaze(self, frame, raw_data, fixations):
+
+        fix_iter = fixations.itertuples()
+        try:
+            fix = next(fix_iter)
+        except StopIteration:
+            fix, fix_iter = None, None
+
+        for gaze in raw_data.itertuples():
+            while fix_iter is not None and fix.start_timestamp + 1e-3*fix.duration < gaze.timestamp:
+                try:
+                    fix = next(fix_iter)
+                except StopIteration:
+                    fix, fix_iter = None, None
+            if fix is None or gaze.timestamp < fix.start_timestamp:
+                color = FixationVisualizer.__UNUSED_COLOR__
+            else:
+                color = FixationVisualizer.__COLORS__[fix.id % len(FixationVisualizer.__COLORS__)]
+            pos = (int(gaze.x * self.cam_info.width), int( (1-gaze.y) * self.cam_info.height ) )
+            cv2.circle(frame, pos, FixationVisualizer.__GAZE_RADIUS__, color, -1)
         
     
     def draw_frame(self, frame, cur_time):
-        cur_num_fix = len(self.fixations) # handle if an addl fix is added while we're running
-        fix_alive = [ self.draw_fixation(frame, f, cur_time) for f in self.fixations[:cur_num_fix].itertuples() ]
-        self.fixations[:cur_num_fix] = (self.fixations[:cur_num_fix])[fix_alive]
+        # handle if an addl fix is added while we're running
+        fix = self.fixations
+        self.draw_fixations(frame, fix) 
         
-        cur_num_gaze = len(self.raw_data)
-        gaze_alive = [ self.draw_raw_gaze(frame, r, cur_time) for r in self.raw_data[:cur_num_gaze].itertuples() ]
-        self.raw_data[:cur_num_gaze] = (self.raw_data[:cur_num_gaze])[gaze_alive]
+        raw_gaze = self.raw_data
+        self.draw_raw_gaze(frame, raw_gaze, fix)
         
         return frame
+
+    def compile_data_and_publish(self, tm):
+        # call this from all the callbacks
+        # basically bc if we're running in sim time, and pause the bag, the timer callback pauses
+        # but the data is still coming in so problems
+        if self._last_image is None:
+            return
+        if self._last_pub_time is not None and (tm - self._last_pub_time) < FixationVisualizer.__MAX_PUB_PERIOD__:
+            return
+        self._last_pub_time = tm
+        frame = self._last_image.copy()
+        new_frame = self.draw_frame(frame, tm.to_sec())
+        self.image_pub.publish(self.bridge.cv2_to_imgmsg(new_frame, encoding='bgr8'))
     
     def _fix_callback(self, msg):
-        self.fixations = pd.concat((self.fixations, get_fixation_from_point_msg(msg)), ignore_index=True)
+        self.fixations = pd.concat((self.fixations, get_fixation_from_point_msg(msg)))
+        if len(self.fixations) > FixationVisualizer.__LINGER_COUNT__:
+            self._last_time = self.fixations.iloc[-FixationVisualizer.__LINGER_COUNT__-1].start_timestamp + self.fixations.iloc[-FixationVisualizer.__LINGER_COUNT__-1].duration*1e-3
+            self.fixations = self.fixations[-FixationVisualizer.__LINGER_COUNT__:]
+        self.compile_data_and_publish(msg.header.stamp)
     
     def _gaze_callback(self, msg):
-        print(msg)
-        self.raw_data = pd.concat((self.raw_data, fixation_detector.gaze_data_from_msg(msg)['world']), ignore_index=True)
+        new_data = pd.DataFrame(fixation_detector.gaze_data_from_msg(msg)['world']).dropna().set_index('timestamp', drop=False)
+        if len(new_data) > 0 and len(self.raw_data) > 0 and self.raw_data.iloc[-1].timestamp >= new_data.iloc[0].timestamp:
+            print('new data went backwards: ')
+            print(self.raw_data.tail())
+            print(new_data)
+        self.raw_data = pd.concat((self.raw_data, new_data))
+        if not self.raw_data.index.is_monotonic:
+            print('new data not monotonic: ')
+            print(self.raw_data.assign(tm=lambda r: r.timestamp-msg.header.stamp.to_sec()).tail())
+            print(new_data.assign(tm=lambda r: r.timestamp-msg.header.stamp.to_sec()))
+        _last_time = self._last_time
+        if _last_time is not None:
+            self.raw_data = self.raw_data.truncate(before=_last_time)
+        
+        self.compile_data_and_publish(msg.header.stamp)
     
     def _cam_info_callback(self, msg):
         self.cam_info = msg
@@ -98,26 +144,33 @@ class FixationVisualizer:
         if self.cam_info is None:
             rospy.logwarn('No camera info received yet')
             return
-        new_frame = self.draw_frame(self.bridge.imgmsg_to_cv2(frame, desired_encoding='bgr8'), frame.header.stamp.to_sec())
-        self.image_pub.publish(self.bridge.cv2_to_imgmsg(new_frame, encoding='bgr8'))
+        self._last_image = self.bridge.imgmsg_to_cv2(frame, desired_encoding='bgr8')
+        self.compile_data_and_publish(frame.header.stamp)
+        
+    def _timer_callback(self, event):
+        rospy.logdebug('got timer callback at {}'.format(event.current_real))
+        self.compile_data_and_publish(event.current_real)
+
 
 def main():
-    image_topic = rospy.resolve_name('raw_image')
-    rospy.loginfo('reading image from topic {}'.format(image_topic))
-    image_subtopic = rospy.get_param('~image_subtopic', 'image_raw')
+    if rospy.get_param('~overlay'):
+        image_topic = rospy.resolve_name('raw_image')
+        image_subtopic = rospy.get_param('~image_subtopic', 'image_raw')
+        rospy.loginfo('reading image from topic {}'.format(image_topic))
+    else:
+        image_topic = None
+        image_subtopic = None
+        rospy.loginfo('generating empty fixation image')
     fixation_topic = rospy.get_param('~fixation_topic', '/fixations')
     gaze_topic = rospy.get_param('~gaze_topic', '/gaze')
-    gaze_color = tuple(int(x) for x in rospy.get_param('~gaze_color', [255, 255, 0]))
-    gaze_radius = int(rospy.get_param('~gaze_radius', 5))
-    fix_color = tuple(int(x) for x in rospy.get_param('~fixation_color', [255, 0, 0]))
-    fix_radius = int(rospy.get_param('~fixation_radius', 15))
-    linger_time = rospy.get_param('~linger_time', 5)
+    # gaze_color = tuple(int(x) for x in rospy.get_param('~gaze_color', [255, 255, 0]))
+    # gaze_radius = int(rospy.get_param('~gaze_radius', 5))
+    # fix_color = tuple(int(x) for x in rospy.get_param('~fixation_color', [255, 0, 0]))
+    # fix_radius = int(rospy.get_param('~fixation_radius', 15))
+    # linger_time = rospy.get_param('~linger_time', 5)
     
     viz = FixationVisualizer(image_topic=image_topic, image_subtopic=image_subtopic,
-                             fixation_topic=fixation_topic, gaze_topic=gaze_topic,
-                             gaze_color=gaze_color, gaze_radius=gaze_radius,
-                             fix_color=fix_color, fix_radius=fix_radius,
-                             linger_time=linger_time)
+                             fixation_topic=fixation_topic, gaze_topic=gaze_topic)
     
     rospy.spin()
 
