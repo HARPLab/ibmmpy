@@ -1,0 +1,16 @@
+<launch>
+
+  <arg name="overlay" default="false" />
+  
+  <node pkg="ibmmpy" type="fixation_visualizer.py" name="fixation_visualizer" output="screen">
+    <remap from="/raw_image" to="/ego_video" />
+    <param name="overlay" value="$(arg overlay)" />
+    <param name="image_subtopic" value="image_raw" />
+    <param name="fixation_topic" value="/fixation_detector/fixations" />
+  </node>
+
+  <node pkg="image_view" type="image_view" name="fixation_image_view">
+    <remap from="image" to="fixation_visualizer/image_overlay" />
+  </node>
+  
+</launch>

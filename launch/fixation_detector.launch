@@ -3,6 +3,7 @@
   <arg name="visualize" default="false" />
   <arg name="camera_name" default="ego_video" />
   <arg name="calibration_file" default="" />
+  <arg name="overlay" default="false" />
 
   <node pkg="ibmmpy" type="fixation_detector.py" name="fixation_detector" output="screen">
     <param name="calibration_world" value="true" />
@@ -14,15 +15,10 @@
   
   <group if="$(arg visualize)">
   
-      <node pkg="ibmmpy" type="fixation_visualizer.py" name="fixation_visualizer" output="screen">
-        <remap from="/raw_image" to="/ego_video" />
-        <param name="image_subtopic" value="image_raw" />
-        <param name="fixation_topic" value="/fixation_detector/fixations" />
-      </node>
-    
-      <node pkg="image_view" type="image_view" name="fixation_image_view">
-        <remap from="image" to="fixation_visualizer/image_overlay" />
-      </node>
+      <include file="$(find ibmmpy)/launch/fixation_visualizer.launch">
+        <arg name="overlay" value="$(arg overlay)" />
+      </include>
+
   </group>
   
 </launch>
