@@ -116,7 +116,7 @@ class DetectorExecutor:
         self.publish(fix, raw_gaze, msg.header.stamp)
         cur_time = rospy.get_rostime()
         if (cur_time > msg.header.stamp + rospy.Duration(0.5)):
-            rospy.logwarn('Processing delay is {}'.format(cur_time - msg.header.stamp))
+            rospy.logwarn('Processing delay is {:.03f} s'.format( (cur_time - msg.header.stamp).to_sec()  ))
             
     def publish(self, fix, raw_data, tm):
         for f, r in zip(fix.itertuples(), raw_data):
