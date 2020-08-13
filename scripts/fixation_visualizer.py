@@ -121,15 +121,16 @@ class FixationVisualizer:
     
     def _gaze_callback(self, msg):
         new_data = pd.DataFrame(fixation_detector.gaze_data_from_msg(msg)['world']).dropna().set_index('timestamp', drop=False)
-        if len(new_data) > 0 and len(self.raw_data) > 0 and self.raw_data.iloc[-1].timestamp >= new_data.iloc[0].timestamp:
-            print('new data went backwards: ')
-            print(self.raw_data.tail())
-            print(new_data)
+        if len(new_data) > 0 and len(self.raw_data) > 0:
+            filt = np.hstack((self.raw_data.iloc[-1].timestamp, new_data.iloc[:-1].timestamp.values)) <= new_data.timestamp.values
+            if not np.all(filt):
+                rospy.logwarn('new data went backwards: {}'.format(new_data.iloc[~filt]))
+                new_data = new_data.iloc[filt,:]
         self.raw_data = pd.concat((self.raw_data, new_data))
         if not self.raw_data.index.is_monotonic:
-            print('new data not monotonic: ')
-            print(self.raw_data.assign(tm=lambda r: r.timestamp-msg.header.stamp.to_sec()).tail())
-            print(new_data.assign(tm=lambda r: r.timestamp-msg.header.stamp.to_sec()))
+            rospy.logwarn(''.join('new data not monotonic: ',
+                self.raw_data.assign(tm=lambda r: r.timestamp-msg.header.stamp.to_sec()).tail(),
+                new_data.assign(tm=lambda r: r.timestamp-msg.header.stamp.to_sec())))
         _last_time = self._last_time
         if _last_time is not None:
             self.raw_data = self.raw_data.truncate(before=_last_time)

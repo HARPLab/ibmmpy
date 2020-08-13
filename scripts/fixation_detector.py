@@ -76,6 +76,15 @@ def get_terminator(goal):
     else:
         return lambda m, g: False
 
+## Handle time going backwards
+def filter_out_time_backwards(data, prev_time=-np.inf):
+    prev_times = np.hstack((prev_time, data.timestamp.values[:-1]))
+    filt = data.timestamp.values >= prev_times
+    if not all(filt):
+        rospy.logwarn('filtered out time going backwards at {} (dt={})'.format(data.iloc[~filt], data.timestamp.values[np.flatnonzero(~filt)]-prev_times[np.flatnonzero(~filt)]))
+    return data.iloc[filt,:]
+
+
 ## Action executors
 class CalibratorExecutor:
     def __init__(self, goal):
@@ -94,7 +103,7 @@ class CalibratorExecutor:
     def finish(self, parent):
         if len(self.points) == 0:
             return False, 'No data collected'
-        data_to_fit = ibmmpy.ibmm_online._call_on_eyes_and_world(lambda l: pd.concat(l, ignore_index=True), 0, self.points)
+        data_to_fit = ibmmpy.ibmm_online._call_on_eyes_and_world(lambda l: filter_out_time_backwards(pd.concat(l, ignore_index=True)), 0, self.points)
         try:
             self.model.train(data_to_fit)
             parent.model = self.model
@@ -110,8 +119,12 @@ class DetectorExecutor:
         self.model.dt = current_goal.label_combination_period
         self.model.min_fix_dur = current_goal.min_fix_duration
         self.pub = pub
+        self._prev_time = {'world': -np.inf, 'eyes': [-np.inf, -np.inf]}
 
     def callback(self, msg, data):
+        data = ibmmpy.ibmm_online._call_on_eyes_and_world(lambda l: filter_out_time_backwards(l[0], l[1]), 0, [data, self._prev_time])
+        self._prev_time = ibmmpy.ibmm_online._call_on_eyes_and_world( lambda l: l[0].timestamp.values[-1] if len(l[0]) > 0 else -np.inf, 0, [data] )
+
         fix, raw_gaze = self.model.classify(data)
         self.publish(fix, raw_gaze, msg.header.stamp)
         cur_time = rospy.get_rostime()
