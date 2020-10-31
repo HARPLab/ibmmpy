@@ -69,6 +69,9 @@ class EyeClassifier:
         SMOOTHINGS = [SMOOTHING_NONE]
         if smoothing not in SMOOTHINGS:
             raise ValueError('Unrecognized smoothing method {}, must be one of {}'.format(smoothing, SMOOTHINGS))
+
+        if np.any(np.diff(data['timestamp']) <= 0.):
+            raise ValueError('Timestamps identical or out of sequence')
         
         # Data extraction
         if 'z' in data.columns and dist_method == DIST_METHOD_VECTOR:
