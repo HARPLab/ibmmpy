@@ -204,7 +204,8 @@ class EyeClassifierOnline(object):
         
     def train(self, data):
         # data: a dictionary with {'world': world data, 'eyes': one or two-length list of data}
-        processed_data = _call_on_eyes_and_world(lambda l: self._classifier.preprocess(l[0]), 0, [data])
+        data_filt = {k:v for k,v in data.items() if k in self.detection_criteria}
+        processed_data = _call_on_eyes_and_world(lambda l: self._classifier.preprocess(l[0]), 0, [data_filt])
         self._classifier.fit(**processed_data)
     
     def classify(self, raw_point):

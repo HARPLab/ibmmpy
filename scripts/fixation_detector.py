@@ -16,11 +16,13 @@ def gaze_data_point_from_msg(msg):
         data['z'] = msg.position.z
     return data
 
+GAZE_DATA_COLUMNS = ['timestamp', 'confidence', 'x', 'y', 'z']
+
 def gaze_data_from_msg(msg):
     return {
-        'world': pd.DataFrame([gaze_data_point_from_msg(m) for m in msg.world_data]),
-        'eyes': [pd.DataFrame([gaze_data_point_from_msg(m) for m in msg.eye0_data]),
-                 pd.DataFrame([gaze_data_point_from_msg(m) for m in msg.eye1_data])]
+        'world': pd.DataFrame([gaze_data_point_from_msg(m) for m in msg.world_data], columns=GAZE_DATA_COLUMNS),
+        'eyes': [pd.DataFrame([gaze_data_point_from_msg(m) for m in msg.eye0_data], columns=GAZE_DATA_COLUMNS),
+                 pd.DataFrame([gaze_data_point_from_msg(m) for m in msg.eye1_data], columns=GAZE_DATA_COLUMNS)]
         }
 
 def msg_from_gaze_data_point(data):
@@ -78,6 +80,8 @@ def get_terminator(goal):
 
 ## Handle time going backwards
 def filter_out_time_backwards(data, prev_time=-np.inf):
+    if len(data) == 0:
+        return data
     prev_times = np.hstack((prev_time, data.timestamp.values[:-1]))
     filt = data.timestamp.values >= prev_times
     if not all(filt):
@@ -103,6 +107,7 @@ class CalibratorExecutor:
     def finish(self, parent):
         if len(self.points) == 0:
             return False, 'No data collected'
+
         data_to_fit = ibmmpy.ibmm_online._call_on_eyes_and_world(lambda l: filter_out_time_backwards(pd.concat(l, ignore_index=True)), 0, self.points)
         try:
             self.model.train(data_to_fit)
@@ -165,6 +170,7 @@ class FixationDetector:
         res, msg = executor.finish(self)
         if not res:
             rospy.logwarn('Failed to perform pre-calibration: {}'.format(msg))
+            import IPython; IPython.embed()
         
     
     def execute(self):
