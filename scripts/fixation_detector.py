@@ -7,7 +7,9 @@ import numpy as np
 import ibmmpy.msg
 import ibmmpy.ibmm_online
 import collections
+import pickle
 import rosbag
+import os
 
 ## Message generating/parsing
 def gaze_data_point_from_msg(msg):
@@ -90,7 +92,7 @@ def filter_out_time_backwards(data, prev_time=-np.inf):
 
 
 ## Action executors
-class CalibratorExecutor:
+class OnlineCalibratorExecutor:
     def __init__(self, goal):
         self.points = []
         self.detection_criteria = []
@@ -99,6 +101,7 @@ class CalibratorExecutor:
         if goal.use_eye0:
             self.detection_criteria.append('eyes')
         self.model = ibmmpy.ibmm_online.EyeClassifierOnline(dt=goal.label_combination_period, detection_criteria=self.detection_criteria, min_fix_dur=goal.min_fix_duration)
+        self.log_dir = goal.log_dir
 
         
     def callback(self, msg, data):
@@ -111,12 +114,26 @@ class CalibratorExecutor:
         data_to_fit = ibmmpy.ibmm_online._call_on_eyes_and_world(lambda l: filter_out_time_backwards(pd.concat(l, ignore_index=True)), 0, self.points)
         try:
             self.model.train(data_to_fit)
-            parent.model = self.model
-            rospy.loginfo('Calibration complete')
-            return True, ''
         except ValueError:
             return False, 'Failed to collect enough valid data for full calibration'
+
+        if self.log_dir != "":
+            with open(os.path.join(self.log_dir, "data.pkl"), 'w') as f:
+                pickle.dump(data_to_fit, f)
+            with open(os.path.join(self.log_dir, "model.pkl"), 'w') as f:
+                pickle.dump(self.model, f)
+
+        parent.model = self.model
+        rospy.loginfo('Calibration complete')
+        return True, ''
         
+def load_calibration_from_dir(load_dir):
+    with open(os.path.join(self.log_dir, "model.pkl"), 'r') as f:
+        model = pickle.load(f)
+    rospy.loginfo("Loaded model {}/model.pkl".format(load_dir))
+    # TODO: also load data and re-train to make sure it matches?
+    return model
+
     
 class DetectorExecutor:
     def __init__(self, current_goal, model, pub):
@@ -134,7 +151,7 @@ class DetectorExecutor:
         self.publish(fix, raw_gaze, msg.header.stamp)
         cur_time = rospy.get_rostime()
         if (cur_time > msg.header.stamp + rospy.Duration(0.5)):
-            rospy.logwarn('Processing delay is {:.03f} s'.format( (cur_time - msg.header.stamp).to_sec()  ))
+            rospy.logwarn_throttle(1., 'Processing delay is {:.03f} s'.format( (cur_time - msg.header.stamp).to_sec()  ))
             
     def publish(self, fix, raw_data, tm):
         for f, r in zip(fix.itertuples(), raw_data):
@@ -162,7 +179,7 @@ class FixationDetector:
         rospy.loginfo('Waiting for goal message')
         
     def calibrate(self, cal_file, cal_goal):
-        executor = CalibratorExecutor(cal_goal)
+        executor = OnlineCalibratorExecutor(cal_goal)
         with rosbag.Bag(cal_file, 'r') as bag:
             for _, msg, _ in bag.read_messages(topics=[cal_goal.topic]):
                 data = gaze_data_from_msg(msg)
@@ -170,8 +187,6 @@ class FixationDetector:
         res, msg = executor.finish(self)
         if not res:
             rospy.logwarn('Failed to perform pre-calibration: {}'.format(msg))
-            import IPython; IPython.embed()
-        
     
     def execute(self):
         if self.current_goal:
@@ -185,7 +200,15 @@ class FixationDetector:
             return
         
         if current_goal.action == ibmmpy.msg.DetectorGoal.ACTION_CALIBRATE:
-            self.executor = CalibratorExecutor(current_goal)
+            if current_goal.load_dir != "":
+                try:
+                    self.model = load_calibration_from_dir(current_goal.load_dir)
+                    self.server.set_succeeded(None, "Loaded calibration from {}".format(current_goal.load_dir))
+                except RuntimeError as ex:
+                    self.server.set_aborted(str(ex))
+                return
+            else:
+                self.executor = OnlineCalibratorExecutor(current_goal)
         elif current_goal.action == ibmmpy.msg.DetectorGoal.ACTION_DETECT:
             if self.model is None:
                 self.server.set_aborted(None, 'Must calibrate the detector before running!')
@@ -201,6 +224,7 @@ class FixationDetector:
         self.timer = rospy.Timer(FixationDetector.WATCHDOG_DURATION, self._timer_callback, oneshot=False)
         self.terminator = get_terminator(self.current_goal)
         self.last_active_time = rospy.get_rostime()
+        
     def _callback(self, msg):
         data = gaze_data_from_msg(msg)
         self.executor.callback(msg, data)
@@ -236,16 +260,20 @@ class FixationDetector:
 def main():
     rospy.init_node("fixation_detector")
     detector = FixationDetector()
-    offline_cal_file = rospy.get_param('~calibration_file', '')
+    offline_cal_file = rospy.get_param('~calibration_bag_file', '')
+    offline_cal_dir = rospy.get_param('~calibration_load_dir', '')
     if offline_cal_file != '':
         use_world = rospy.get_param('~calibration_world', False)
         use_eye0 = rospy.get_param('~calibration_eye0', False)
         use_eye1 = rospy.get_param('~calibration_eye1', False)
         topic = rospy.get_param('~calibration_topic', 'gaze')
+        log_dir = rospy.get_param('~calibration_log_dir', '')
         goal = ibmmpy.msg.DetectorGoal(topic=topic,
-                use_world=use_world, use_eye0=use_eye0, use_eye1=use_eye1)
+                use_world=use_world, use_eye0=use_eye0, use_eye1=use_eye1, log_dir=log_dir)
         rospy.loginfo('Running offline calibration from {}, goal spec {}'.format(offline_cal_file, goal))
         detector.calibrate(offline_cal_file, goal)
+    elif offline_cal_dir != '':
+        detector.model = load_calibration_from_dir(offline_cal_dir)
         
     detector.start()
     rospy.spin()

@@ -19,6 +19,10 @@ float64 detection_time # length in seconds to collect data
 float64 label_combination_period # sec
 float64 min_fix_duration # sec
 
+# For calibration:
+string log_dir    # directory to save calibrated model + data to
+string load_dir   # directory to load calibration model from (should be output of log_dir)
+
 ---
 # Result
 # all we really need is a bool success and a string message which are implemented by the action server
