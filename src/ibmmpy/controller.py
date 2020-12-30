@@ -102,6 +102,7 @@ class FixationDetectorControllerFrame(tk.Frame, object):
         self._cal_load_title.grid(row=0, column=0, sticky="nw")
         self._cal_load_label = tk.Label(self._load_cal_frame, textvariable=self._cal_load_var)
         self._cal_load_label.grid(row=1, column=0, sticky='new')
+        self._cal_load_label.bind("<Configure>", lambda e: e.widget.configure(wraplength=e.widget.winfo_width()))
         self._cal_load_btn = tk.Button(self._load_cal_frame, text="Choose", command=self._set_cal_load_var)
         self._cal_load_btn.grid(row=0, column=1, sticky='nw')
         self._cal_run_load_btn = tk.Button(self._load_cal_frame, text="Load calibration", command=self._load_cal)
@@ -150,6 +151,7 @@ class FixationDetectorControllerFrame(tk.Frame, object):
         self._goal_val = tk.StringVar()
         self._goal_val_label = tk.Label(self._status_frame, textvariable=self._goal_val, justify=tk.LEFT)
         self._goal_val_label.grid(row=2, column=1, sticky="ne")
+        self._goal_val_label.bind("<Configure>", lambda e: e.widget.configure(wraplength=e.widget.winfo_width()))
 
         self._goal_status_label = tk.Label(self._status_frame, text="Goal status:")
         self._goal_status_label.grid(row=3, column=0, sticky="nw")
@@ -180,6 +182,9 @@ class FixationDetectorControllerFrame(tk.Frame, object):
 
         # for external use
         self.log_dir_accessor = None
+
+        # start the output loop
+        self.after(100, self._update_status)
 
     def set_log_dir_accessor(self, accessor):
         self.log_dir_accessor = accessor
@@ -246,11 +251,14 @@ class FixationDetectorControllerFrame(tk.Frame, object):
             self._action_client.send_goal(goal, self._recv_done, self._recv_active, self._recv_feedback)
     
     def _recv_done(self, state, result):
+        rospy.loginfo("Got done: {}, {}".format(state, self._action_client.get_goal_status_text()))
         self._status_queue.append(state)
         self._result_queue.append(self._action_client.get_goal_status_text())
         self._action_client.stop_tracking_goal()
 
     def _recv_active(self):
+        # fix timing issue
+        rospy.loginfo("Got active: {}".format(self._action_client.get_state()))
         self._status_queue.append(self._action_client.get_state())
 
     def _recv_feedback(self, feedback):
@@ -262,7 +270,7 @@ class FixationDetectorControllerFrame(tk.Frame, object):
     def _load_cal(self):
         if self._action_client:
             if not self._cal_load_var.get():
-                rospy.logerror("Must specify a directory for calibration")
+                rospy.logerr("Must specify a directory for calibration")
                 return
             goal = ibmmpy.msg.DetectorGoal()
             goal.action = ibmmpy.msg.DetectorGoal.ACTION_CALIBRATE
@@ -291,9 +299,7 @@ class FixationDetectorControllerFrame(tk.Frame, object):
         if self._action_client:
             self._action_client.cancel_goal()
 
-    def run_once(self):
-        self.update()
-
+    def _update_status(self):
         status = get_latest_and_clear(self._status_queue)
         if status is not None:
             self._goal_status_val.set(actionlib.GoalStatus.to_string(status))
@@ -305,6 +311,8 @@ class FixationDetectorControllerFrame(tk.Frame, object):
         result = get_latest_and_clear(self._result_queue)
         if result is not None:
             self._result_var.set(str(result))
+
+        self.after(100, self._update_status)
 
     def get_config(self):
         return { FIXATION_DETECTOR_CONFIG_NAME: {
@@ -335,5 +343,4 @@ if __name__ == "__main__":
     controller.pack(expand=True, fill=tk.BOTH)
     
     while rospy is None or not rospy.is_shutdown():
-        controller.run_once()
-        time.sleep(0.01)
+        parent.update()

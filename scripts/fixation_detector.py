@@ -10,6 +10,7 @@ import collections
 import pickle
 import rosbag
 import os
+import traceback
 
 ## Message generating/parsing
 def gaze_data_point_from_msg(msg):
@@ -119,6 +120,7 @@ class OnlineCalibratorExecutor:
             return False, 'Failed to collect enough valid data for full calibration'
         rospy.loginfo("Training complete.")
         if self.log_dir != "":
+            os.makedirs(self.log_dir)
             with open(os.path.join(self.log_dir, "data.pkl"), 'w') as f:
                 pickle.dump(data_to_fit, f)
             with open(os.path.join(self.log_dir, "model.pkl"), 'w') as f:
@@ -129,7 +131,7 @@ class OnlineCalibratorExecutor:
         return True, ''
         
 def load_calibration_from_dir(load_dir):
-    with open(os.path.join(self.log_dir, "model.pkl"), 'r') as f:
+    with open(os.path.join(load_dir, "model.pkl"), 'r') as f:
         model = pickle.load(f)
     rospy.loginfo("Loaded model {}/model.pkl".format(load_dir))
     # TODO: also load data and re-train to make sure it matches?
@@ -255,6 +257,7 @@ class FixationDetector:
             else:
                 self.server.set_aborted(None, msg)
         except Exception as e:
+            rospy.logerror("Exception when finishing msg:\n{}".format(traceback.format_exc()))
             self.server.set_aborted(None, e.message)
             
         
