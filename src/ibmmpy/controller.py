@@ -29,7 +29,7 @@ def get_latest_and_clear(queue):
         return res
 
 class FixationDetectorControllerFrame(tk.Frame, object):
-    def __init__(self, parent, initial_config={}):
+    def __init__(self, parent, initial_config={}, log_dir_accessor=None):
         super(FixationDetectorControllerFrame, self).__init__(parent)
 
         initial_config = initial_config.get(FIXATION_DETECTOR_CONFIG_NAME, {})
@@ -179,7 +179,10 @@ class FixationDetectorControllerFrame(tk.Frame, object):
         self._result_queue = collections.deque()
 
         # for external use
-        self.log_dir = ""
+        self.log_dir_accessor = None
+
+    def set_log_dir_accessor(self, accessor):
+        self.log_dir_accessor = accessor
 
     def _connect(self):
         topic = self._basic_topic_var.get()
@@ -270,7 +273,8 @@ class FixationDetectorControllerFrame(tk.Frame, object):
         if self._action_client:
             goal = ibmmpy.msg.DetectorGoal()
             goal.action = ibmmpy.msg.DetectorGoal.ACTION_CALIBRATE
-            goal.log_dir = self.log_dir
+            if self.log_dir_accessor:
+                goal.log_dir = self.log_dir_accessor()
             self._send_goal(goal)
 
     def _stop_cal(self):
@@ -312,6 +316,10 @@ class FixationDetectorControllerFrame(tk.Frame, object):
             "label_combination_period": _float_or_zero(self._basic_combination_period_var.get()),
             "min_fix_duration": _float_or_zero(self._basic_min_fix_dur_var.get())
         } }
+    
+    def set_state(self, state):
+        # fixation detector is independent of trial stuff so don't turn on/off when the trial runs
+        pass
 
 def _float_or_zero(s):
     try:
