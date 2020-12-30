@@ -112,11 +112,12 @@ class OnlineCalibratorExecutor:
             return False, 'No data collected'
 
         data_to_fit = ibmmpy.ibmm_online._call_on_eyes_and_world(lambda l: filter_out_time_backwards(pd.concat(l, ignore_index=True)), 0, self.points)
+        rospy.loginfo("Training model (may take some time to complete)...")
         try:
             self.model.train(data_to_fit)
         except ValueError:
             return False, 'Failed to collect enough valid data for full calibration'
-
+        rospy.loginfo("Training complete.")
         if self.log_dir != "":
             with open(os.path.join(self.log_dir, "data.pkl"), 'w') as f:
                 pickle.dump(data_to_fit, f)
