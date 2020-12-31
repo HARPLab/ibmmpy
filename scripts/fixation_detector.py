@@ -111,8 +111,9 @@ class OnlineCalibratorExecutor:
     def finish(self, parent):
         if len(self.points) == 0:
             return False, 'No data collected'
-
         data_to_fit = ibmmpy.ibmm_online._call_on_eyes_and_world(lambda l: filter_out_time_backwards(pd.concat(l, ignore_index=True)), 0, self.points)
+        num_pts = ibmmpy.ibmm_online._call_on_eyes_and_world(len, 0, data_to_fit)
+        rospy.loginfo("Got {} messages for calibration ({})".format(len(self.points), str(num_pts)))
         rospy.loginfo("Training model (may take some time to complete)...")
         try:
             self.model.train(data_to_fit)
@@ -196,7 +197,7 @@ class FixationDetector:
             self.finish()
         current_goal = self.server.accept_new_goal()
         rospy.loginfo('Got goal callback, goal: {}'.format(current_goal))
-        
+
         if self.server.is_preempt_requested():
             rospy.logwarn('Goal preempted immediately after request')
             self.server.set_preempted()
@@ -208,7 +209,7 @@ class FixationDetector:
                     self.model = load_calibration_from_dir(current_goal.load_dir)
                     self.server.set_succeeded(None, "Loaded calibration from {}".format(current_goal.load_dir))
                 except RuntimeError as ex:
-                    self.server.set_aborted(str(ex))
+                    self.server.set_aborted(None, str(ex))
                 return
             else:
                 self.executor = OnlineCalibratorExecutor(current_goal)
@@ -221,17 +222,24 @@ class FixationDetector:
         else:
             self.server.set_aborted(None, 'Unknown action requested: {}'.format(current_goal.action))
             return
+
+        try:
+            self.sub = rospy.Subscriber(current_goal.topic, ibmmpy.msg.GazeData, self._callback)
+        except ValueError as ex:
+            self.server.set_aborted(None, str(ex))
+            return
         
         self.current_goal = current_goal
-        self.sub = rospy.Subscriber(self.current_goal.topic, ibmmpy.msg.GazeData, self._callback)
         self.timer = rospy.Timer(FixationDetector.WATCHDOG_DURATION, self._timer_callback, oneshot=False)
         self.terminator = get_terminator(self.current_goal)
         self.last_active_time = rospy.get_rostime()
         
     def _callback(self, msg):
         data = gaze_data_from_msg(msg)
+        rospy.loginfo("Got data: {}".format(str(data)))
         self.executor.callback(msg, data)
         if self.server.is_preempt_requested() or self.terminator(msg, data):
+            rospy.loginfo('Termination condition reached.')
             self.finish()
         # extend the keepalive timer
         self.last_active_time = rospy.get_rostime()
@@ -250,6 +258,7 @@ class FixationDetector:
         self.timer.shutdown()
         
         # end executor
+        rospy.loginfo("Finishing goal...")
         try:
             res, msg = self.executor.finish(self)
             if res:
@@ -258,7 +267,7 @@ class FixationDetector:
                 self.server.set_aborted(None, msg)
         except Exception as e:
             rospy.logerror("Exception when finishing msg:\n{}".format(traceback.format_exc()))
-            self.server.set_aborted(None, e.message)
+            self.server.set_aborted(None, str(e))
             
         
 def main():
