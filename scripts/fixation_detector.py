@@ -107,6 +107,9 @@ class OnlineCalibratorExecutor:
         
     def callback(self, msg, data):
         self.points.append(data)
+
+    def timer_callback(self, evt):
+        pass
                 
     def finish(self, parent):
         if len(self.points) == 0:
@@ -156,6 +159,12 @@ class DetectorExecutor:
         cur_time = rospy.get_rostime()
         if (cur_time > msg.header.stamp + rospy.Duration(0.5)):
             rospy.logwarn_throttle(1., 'Processing delay is {:.03f} s'.format( (cur_time - msg.header.stamp).to_sec()  ))
+
+    def timer_callback(self, evt):
+        # called when a timer evt is fired without a message
+        # finish up the previous fixation so we don't hang on the next data
+        fix, raw = self.model.finish()
+        self.publish(fix, raw, rospy.get_rostime())
             
     def publish(self, fix, raw_data, tm):
         for f, r in zip(fix.itertuples(), raw_data):
@@ -249,6 +258,7 @@ class FixationDetector:
             self.finish()
         elif self.last_active_time is None or (msg.last_real and self.last_active_time <= msg.last_real):
             rospy.logwarn('No gaze data received from {} for at least {} s'.format(self.current_goal.topic, self.timer._period.to_sec()))
+            self.executor.timer_callback(msg)
             
     def finish(self):
         self.current_goal = None
