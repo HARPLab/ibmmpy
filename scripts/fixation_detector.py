@@ -112,7 +112,7 @@ class OnlineCalibratorExecutor:
         if len(self.points) == 0:
             return False, 'No data collected'
         data_to_fit = ibmmpy.ibmm_online._call_on_eyes_and_world(lambda l: filter_out_time_backwards(pd.concat(l, ignore_index=True)), 0, self.points)
-        num_pts = ibmmpy.ibmm_online._call_on_eyes_and_world(len, 0, data_to_fit)
+        num_pts = ibmmpy.ibmm_online._call_on_eyes_and_world(lambda l: len(l[0]), 0, [data_to_fit])
         rospy.loginfo("Got {} messages for calibration ({})".format(len(self.points), str(num_pts)))
         rospy.loginfo("Training model (may take some time to complete)...")
         try:
@@ -236,7 +236,6 @@ class FixationDetector:
         
     def _callback(self, msg):
         data = gaze_data_from_msg(msg)
-        rospy.loginfo("Got data: {}".format(str(data)))
         self.executor.callback(msg, data)
         if self.server.is_preempt_requested() or self.terminator(msg, data):
             rospy.loginfo('Termination condition reached.')
@@ -266,7 +265,7 @@ class FixationDetector:
             else:
                 self.server.set_aborted(None, msg)
         except Exception as e:
-            rospy.logerror("Exception when finishing msg:\n{}".format(traceback.format_exc()))
+            rospy.logerr("Exception when finishing msg:\n{}".format(traceback.format_exc()))
             self.server.set_aborted(None, str(e))
             
         
