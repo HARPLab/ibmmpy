@@ -116,10 +116,14 @@ class FixationDetectorControllerFrame(tk.Frame, object):
         self._run_cal_frame = tk.Frame(self._config_frame, bd=2, relief=tk.GROOVE)
         self._run_cal_label = tk.Label(self._run_cal_frame, text="Run calibration")
         self._run_cal_label.grid(row=0, column=0, columnspan=2, sticky="nw")
+        self._run_cal_log_var = tk.IntVar()
+        self._run_cal_log_var.set(initial_config.get("log_calibration", True))
+        self._run_cal_log_check = tk.Checkbutton(self._run_cal_frame, text="Save calibration to log", variable=self._run_cal_log_var)
+        self._run_cal_log_check.grid(row=1, column=0, sticky="nw")
         self._run_cal_start_btn = tk.Button(self._run_cal_frame, text="Start", command=self._start_cal)
         self._run_cal_stop_btn = tk.Button(self._run_cal_frame, text="Stop", command=self._stop_cal)
-        self._run_cal_start_btn.grid(row=1, column=0, sticky='n')
-        self._run_cal_stop_btn.grid(row=1, column=1, sticky='n')
+        self._run_cal_start_btn.grid(row=2, column=0, sticky='n')
+        self._run_cal_stop_btn.grid(row=2, column=1, sticky='n')
 
         self._run_cal_frame.columnconfigure(0, weight=1)
         self._run_cal_frame.columnconfigure(1, weight=1)
@@ -281,7 +285,7 @@ class FixationDetectorControllerFrame(tk.Frame, object):
         if self._action_client:
             goal = ibmmpy.msg.DetectorGoal()
             goal.action = ibmmpy.msg.DetectorGoal.ACTION_CALIBRATE
-            if self.log_dir_accessor:
+            if self.log_dir_accessor and self._run_cal_log_var.get():
                 goal.log_dir = self.log_dir_accessor()
             self._send_goal(goal)
 
@@ -322,7 +326,8 @@ class FixationDetectorControllerFrame(tk.Frame, object):
             "use_eye0": bool(self._basic_use_eye0_var.get()),
             "use_eye1": bool(self._basic_use_eye1_var.get()),
             "label_combination_period": _float_or_zero(self._basic_combination_period_var.get()),
-            "min_fix_duration": _float_or_zero(self._basic_min_fix_dur_var.get())
+            "min_fix_duration": _float_or_zero(self._basic_min_fix_dur_var.get()),
+            "log_calibration": bool(self._run_cal_log_var.get())
         } }
     
     def set_state(self, state):
