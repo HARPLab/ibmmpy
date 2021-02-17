@@ -29,7 +29,7 @@ def get_latest_and_clear(queue):
         return res
 
 class FixationDetectorControllerFrame(tk.Frame, object):
-    def __init__(self, parent, initial_config={}, log_dir_accessor=None):
+    def __init__(self, parent, initial_config={}, run_fn=lambda _: None, log_dir_accessor=None):
         super(FixationDetectorControllerFrame, self).__init__(parent)
 
         initial_config = initial_config.get(FIXATION_DETECTOR_CONFIG_NAME, {})
