@@ -1,0 +1,14 @@
+# Destination can be:
+# - A directory
+#       Will be created if it doesn't exist
+#       Will write data to data.pkl and model to model.pkl in that directory
+# - A format string ("/my/dir/fixation-{}.pkl")
+#       Will write data to destination.format("data") and model to destination.format("model")
+#       Will not create any new directories
+string destination
+
+# Overwrite existing files?
+bool overwrite
+---
+bool ok
+string msg

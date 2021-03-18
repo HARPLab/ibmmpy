@@ -34,6 +34,11 @@ add_message_files(
 #  LabelData.msg
 )
 
+add_service_files(
+    FILES
+    SaveCalibration.srv
+)
+
 add_action_files(
     FILES
     Detector.action

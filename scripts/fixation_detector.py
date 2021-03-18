@@ -6,6 +6,7 @@ import pandas as pd
 import numpy as np
 import ibmmpy.msg
 import ibmmpy.ibmm_online
+import ibmmpy.srv
 import collections
 import pickle
 import rosbag
@@ -124,13 +125,10 @@ class OnlineCalibratorExecutor:
             return False, 'Failed to collect enough valid data for full calibration'
         rospy.loginfo("Training complete.")
         if self.log_dir != "":
-            os.makedirs(self.log_dir)
-            with open(os.path.join(self.log_dir, "data.pkl"), 'w') as f:
-                pickle.dump(data_to_fit, f)
-            with open(os.path.join(self.log_dir, "model.pkl"), 'w') as f:
-                pickle.dump(self.model, f)
+            save_calibration_info(self.log_dir, model, data_to_fit)
 
         parent.model = self.model
+        parent.calibration_data = data_to_fit
         rospy.loginfo('Calibration complete')
         return True, ''
         
@@ -140,6 +138,34 @@ def load_calibration_from_dir(load_dir):
     rospy.loginfo("Loaded model {}/model.pkl".format(load_dir))
     # TODO: also load data and re-train to make sure it matches?
     return model
+
+def save_calibration_info(dest, model, data, overwrite=False):
+    if os.path.basename(dest) == '' or os.path.isdir(dest):
+        # we think it's a directory...
+        if not os.path.isdir(dest):
+            os.makedirs(dest)
+        if not os.path.isdir(dest):
+            raise ValueError("Failed to create directory {}".format(dest))
+
+        model_file = os.path.join(dest, 'model.pkl')
+        data_file = os.path.join(dest, 'data.pkl')
+    else:
+        # assume it's a file pattern
+        model_file = dest.format('model')
+        data_file = dest.format('data')
+        if model_file == data_file:
+            raise ValueError('Failed to format {}: format generated identical string'.format(dest))
+    
+    if not overwrite:
+        if os.path.exists(model_file):
+            raise ValueError('File exists: {}'.format(model_file))
+        elif os.path.exists(data_file):
+            raise ValueError('File exists: {}'.format(data_file))
+    
+    with open(model_file, 'w') as f:
+        pickle.dump(model, f)
+    with open(data_file, 'w') as f:
+        pickle.dump(data, f)
 
     
 class DetectorExecutor:
@@ -184,7 +210,9 @@ class FixationDetector:
         self.server = actionlib.SimpleActionServer('~detect', ibmmpy.msg.DetectorAction, None, False)
         self.server.register_goal_callback(self.execute)
         self.model = None
+        self.calibration_data = None
         self.pub = rospy.Publisher('~fixations', ibmmpy.msg.FixationDataPoint, queue_size=10)
+        self.cal_saver = rospy.Service('~save_calibration', ibmmpy.srv.SaveCalibration, self._save_calibration)
         
     def start(self):
         self.server.start()
@@ -259,6 +287,17 @@ class FixationDetector:
         elif self.last_active_time is None or (msg.last_real and self.last_active_time <= msg.last_real):
             rospy.logwarn('No gaze data received from {} for at least {} s'.format(self.current_goal.topic, self.timer._period.to_sec()))
             self.executor.timer_callback(msg)
+
+    def _save_calibration(self, req):
+        if self.model is None or self.calibration_data is None:
+            return ibmmpy.srv.SaveCalibrationResponse(ok=False, msg="Service not calibrated!")
+        try:
+            save_calibration_info(req.destination, self.model, self.calibration_data, req.overwrite)
+        except Exception as ex:
+            return ibmmpy.srv.SaveCalibrationResponse(ok=False, msg=str(ex))
+        else:
+            return ibmmpy.srv.SaveCalibrationResponse(ok=True, msg="Saved to {}".format(req.destination))
+
             
     def finish(self):
         self.current_goal = None
