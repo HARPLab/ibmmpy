@@ -13,6 +13,7 @@ try:
     import actionlib
 
     import ibmmpy.msg
+    import ibmmpy.srv
 except ImportError:
     rospy = None
 
@@ -117,9 +118,9 @@ class FixationDetectorControllerFrame(tk.Frame, object):
         self._run_cal_label = tk.Label(self._run_cal_frame, text="Run calibration")
         self._run_cal_label.grid(row=0, column=0, columnspan=2, sticky="nw")
         self._run_cal_log_var = tk.IntVar()
-        self._run_cal_log_var.set(initial_config.get("log_calibration", True))
-        self._run_cal_log_check = tk.Checkbutton(self._run_cal_frame, text="Save calibration to log", variable=self._run_cal_log_var)
-        self._run_cal_log_check.grid(row=1, column=0, sticky="nw")
+        # self._run_cal_log_var.set(initial_config.get("log_calibration", True))
+        # self._run_cal_log_check = tk.Checkbutton(self._run_cal_frame, text="Save calibration to log", variable=self._run_cal_log_var)
+        # self._run_cal_log_check.grid(row=1, column=0, sticky="nw")
         self._run_cal_start_btn = tk.Button(self._run_cal_frame, text="Start", command=self._start_cal)
         self._run_cal_stop_btn = tk.Button(self._run_cal_frame, text="Stop", command=self._stop_cal)
         self._run_cal_start_btn.grid(row=2, column=0, sticky='n')
@@ -185,13 +186,10 @@ class FixationDetectorControllerFrame(tk.Frame, object):
         self._result_queue = collections.deque()
 
         # for external use
-        self.log_dir_accessor = None
+        # self.log_dir_accessor = None
 
         # start the output loop
         self.after(100, self._update_status)
-
-    def set_log_dir_accessor(self, accessor):
-        self.log_dir_accessor = accessor
 
     def _connect(self):
         topic = self._basic_topic_var.get()
@@ -285,8 +283,8 @@ class FixationDetectorControllerFrame(tk.Frame, object):
         if self._action_client:
             goal = ibmmpy.msg.DetectorGoal()
             goal.action = ibmmpy.msg.DetectorGoal.ACTION_CALIBRATE
-            if self.log_dir_accessor and self._run_cal_log_var.get():
-                goal.log_dir = self.log_dir_accessor()
+            # if self.log_dir_accessor and self._run_cal_log_var.get():
+            #     goal.log_dir = self.log_dir_accessor()
             self._send_goal(goal)
 
     def _stop_cal(self):
@@ -327,12 +325,54 @@ class FixationDetectorControllerFrame(tk.Frame, object):
             "use_eye1": bool(self._basic_use_eye1_var.get()),
             "label_combination_period": _float_or_zero(self._basic_combination_period_var.get()),
             "min_fix_duration": _float_or_zero(self._basic_min_fix_dur_var.get()),
-            "log_calibration": bool(self._run_cal_log_var.get())
+            # "log_calibration": bool(self._run_cal_log_var.get())
         } }
     
     def set_state(self, state):
         # fixation detector is independent of trial stuff so don't turn on/off when the trial runs
         pass
+    
+    def create_proxy_fix_logger_frame(self, *args, **kwargs):
+        # this is an ~extremely hacky~ way to access the data in this frame
+        # when trying to create the logger below
+        # it can't access it through the config var bc the logger very "helpfully" strips out
+        # anything outside the "logger" value, which is useful for namespacing for other loggers
+        # unfortunately it's tricky to just make run_fixation_logger a member fn because it
+        # gets called on the wrong thread, so it isn't allowed to access the tk variables
+        # imo this is ~slightly~ less hacky than maintaining a separate topic var on the
+        # running thread that's safe to access or passing the logger function to run on
+        # the gui frame
+        # but it does mean there's duplicate info in the config
+        # what can you do
+        return _ConfigProxy(self)
+
+class _ConfigProxy:
+    def __init__(self, parent):
+        self._parent = parent
+    def grid(self, *args, **kwargs):
+        pass
+    def set_state(self, *args, **kwargs):
+        pass
+    def get_config(self):
+        return self._parent.get_config()
+
+
+def run_fixation_logger(log_dir, config):
+    # this is technically supposed to return a log object
+    # but we don't actually need to run continuously, just dump the cal once
+    # so do it and return None
+    topic = config.get(FIXATION_DETECTOR_CONFIG_NAME, {}).get('topic', None)
+    if topic:
+        save_cal = rospy.ServiceProxy(topic + '/save_calibration', ibmmpy.srv.SaveCalibration)
+        try:
+            res = save_cal(destination=log_dir, overwrite=False)
+        except rospy.ServiceException as ex:
+            rospy.logwarn('Failed to connect to fixation detector to save calibration: {}'.format(str(ex)))
+        else:
+            if not res.ok:
+                rospy.logwarn('Failed to save calibration to {}: {}'.format(log_dir, res.msg))
+    return None
+
 
 def _float_or_zero(s):
     try:
