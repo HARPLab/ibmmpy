@@ -8,6 +8,7 @@ import ibmmpy.msg
 import ibmmpy.ibmm_online
 import ibmmpy.srv
 import collections
+import copy
 import pickle
 import rosbag
 import os
@@ -136,8 +137,10 @@ def load_calibration_from_dir(load_dir):
     with open(os.path.join(load_dir, "model.pkl"), 'r') as f:
         model = pickle.load(f)
     rospy.loginfo("Loaded model {}/model.pkl".format(load_dir))
+    with open(os.path.join(load_dir, "data.pkl"), 'r') as f:
+        data = pickle.load(f)
     # TODO: also load data and re-train to make sure it matches?
-    return model
+    return model, data
 
 def save_calibration_info(dest, model, data, overwrite=False):
     if os.path.basename(dest) == '' or os.path.isdir(dest):
@@ -162,6 +165,9 @@ def save_calibration_info(dest, model, data, overwrite=False):
         elif os.path.exists(data_file):
             raise ValueError('File exists: {}'.format(data_file))
     
+    # make sure we clean up in case we're in the middle of detection
+    model = copy.deepcopy(model)
+    model.finish()
     with open(model_file, 'w') as f:
         pickle.dump(model, f)
     with open(data_file, 'w') as f:
@@ -171,6 +177,7 @@ def save_calibration_info(dest, model, data, overwrite=False):
 class DetectorExecutor:
     def __init__(self, current_goal, model, pub):
         self.model = model
+        self.model.finish()  # just in case we didn't clean up properly for some reason
         self.model.dt = current_goal.label_combination_period
         self.model.min_fix_dur = current_goal.min_fix_duration
         self.pub = pub
@@ -243,7 +250,7 @@ class FixationDetector:
         if current_goal.action == ibmmpy.msg.DetectorGoal.ACTION_CALIBRATE:
             if current_goal.load_dir != "":
                 try:
-                    self.model = load_calibration_from_dir(current_goal.load_dir)
+                    self.model, self.calibration_data = load_calibration_from_dir(current_goal.load_dir)
                     self.server.set_succeeded(None, "Loaded calibration from {}".format(current_goal.load_dir))
                 except RuntimeError as ex:
                     self.server.set_aborted(None, str(ex))
