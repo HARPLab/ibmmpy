@@ -88,9 +88,23 @@ def randomized_online_test(n=1):
         np.random.seed(i)
         
         # generate fixations 
+
+
+def test_max_fix_dur():    
+    # world-based
+    vel_w = EyeClassifier.preprocess(gaze_data)
+    model = EyeClassifier()
+    model.fit(world=vel_w)
+
+    fix, _ = model.get_fixations(world=vel_w, gaze_data=gaze_data, min_fix_dur=50)
+    print(fix)
+    
+    fix, _ = model.get_fixations(world=vel_w, gaze_data=gaze_data, min_fix_dur=50, max_fix_dur=225)
+    print(fix)
+
     
 if __name__ == "__main__":
-    test2()
+    test_max_fix_dur()
         
         
         

@@ -299,7 +299,7 @@ class EyeClassifier:
             return data_to_fuse
         
     @staticmethod
-    def get_fixations_from_labels(labels, gaze_data=None, min_fix_dur=100):
+    def get_fixations_from_labels(labels, gaze_data=None, min_fix_dur=100, max_fix_dur=1000):
         """
         Convert a sequence of labels into detected fixations.
         
@@ -307,6 +307,7 @@ class EyeClassifier:
         labels -- pandas-style dataframe with columns 'timestamp', 'label', as in supplied by EyeClassifier.fuse
         gaze_data -- Pandas-style dataframe with columns 'timestamp', 'x', 'y', or None. Fills out fixation 'x', 'y' if provided
         min_fix_dur -- minimum fixation duration to filter out (in ms), or None if no filtering is to be done
+        max_fix_dur -- maximum fixation duration to divide into; fixations longer than this will be split into multiple fixations
         
         Returns:
         pandas dataframe of all detected fixations with columns 'start_timestamp', 'duration' (in ms). If gaze_data is provided, also
@@ -358,9 +359,18 @@ class EyeClassifier:
                            columns=['start_timestamp', 'duration'])
 
         #Filter out too-short fixations
+        if max_fix_dur is not None:
+            fix_adj = []
+            for f in fix.itertuples(index=False):
+                while f.duration > max_fix_dur:
+                    fix_adj.append(f._replace(duration=max_fix_dur))
+                    f = f._replace(start_timestamp=f.start_timestamp+min_fix_dur*1e-3, duration=f.duration-max_fix_dur)
+                fix_adj.append(f)
+            fix = pd.DataFrame(fix_adj, columns=fix.columns)
         if min_fix_dur is not None:
             fix = fix.loc[fix.duration >= min_fix_dur, :]
             fix.index = np.arange(len(fix))
+
         if gaze_data is not None:
             gaze_raw = [gaze_data.loc[np.logical_and(gaze_data.timestamp.values >= r.start_timestamp,
                                                                        gaze_data.timestamp.values <= r.start_timestamp + .001*r.duration), ['timestamp', 'confidence', 'x','y']]
@@ -373,11 +383,11 @@ class EyeClassifier:
         fix.index.name = 'id'
         return fix, gaze_raw
     
-    def get_fixations(self, eyes=None, world=None, ts=None, dt=None, gaze_data=None, min_fix_dur=100):
+    def get_fixations(self, eyes=None, world=None, ts=None, dt=None, gaze_data=None, min_fix_dur=100, max_fix_dur=1000):
         if ts is None and dt is None and gaze_data is not None:
             ts = gaze_data.timestamp.values
         labels, _ = self.predict(eyes=eyes, world=world, ts=ts, dt=dt)
-        return EyeClassifier.get_fixations_from_labels(labels, gaze_data, min_fix_dur)
+        return EyeClassifier.get_fixations_from_labels(labels, gaze_data, min_fix_dur, max_fix_dur)
             
         
         
