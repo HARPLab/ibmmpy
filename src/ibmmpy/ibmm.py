@@ -364,7 +364,7 @@ class EyeClassifier:
             for f in fix.itertuples(index=False):
                 while f.duration > max_fix_dur:
                     fix_adj.append(f._replace(duration=max_fix_dur))
-                    f = f._replace(start_timestamp=f.start_timestamp+min_fix_dur*1e-3, duration=f.duration-max_fix_dur)
+                    f = f._replace(start_timestamp=f.start_timestamp+max_fix_dur*1e-3, duration=f.duration-max_fix_dur)
                 fix_adj.append(f)
             fix = pd.DataFrame(fix_adj, columns=fix.columns)
         if min_fix_dur is not None:
