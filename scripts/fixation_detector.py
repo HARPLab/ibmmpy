@@ -180,6 +180,7 @@ class DetectorExecutor:
         self.model.finish()  # just in case we didn't clean up properly for some reason
         self.model.dt = current_goal.label_combination_period
         self.model.min_fix_dur = current_goal.min_fix_duration
+        self.model.max_fix_dur = current_goal.max_fix_duration
         self.pub = pub
         self._prev_time = {'world': -np.inf, 'eyes': [-np.inf, -np.inf]}
 

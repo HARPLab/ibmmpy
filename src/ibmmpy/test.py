@@ -68,10 +68,10 @@ def test2():
             }
         print(subset)
         next_fix = online_processor.classify(subset)
-        print('--------\n{}:\n{}\n======'.format(t, next_fix))
+        print('--------\n{}:\n{}'.format(t, next_fix))
         fix.append(next_fix)
     last_fix = online_processor.finish()
-    print('--------\n{}:\n{}\n======'.format('last', last_fix))
+    print('--------\n{}:\n{}'.format('last', last_fix))
     fix.append(last_fix)
     
     print('|||||||||||||||\n{}'.format(pd.concat(fix, sort=False)))
@@ -101,10 +101,57 @@ def test_max_fix_dur():
     
     fix, _ = model.get_fixations(world=vel_w, gaze_data=gaze_data, min_fix_dur=50, max_fix_dur=225)
     print(fix)
+    
+def test_max_fix_dur_online():
+    online_processor = EyeClassifierOnline(dt=0.05, detection_criteria=['world'], max_fix_dur=175, min_fix_dur=30)
+    online_processor.train({'world': gaze_data})
+    
+    def run_test(transmit_dt, label_dt, min_fix_dur, max_fix_dur):
+        try:
+            online_processor.dt = label_dt
+            online_processor.min_fix_dur = min_fix_dur
+            online_processor.max_fix_dur = max_fix_dur
+        except ValueError:
+            print("Skipped: transmit={}, label={}, min={}, max={}".format(transmit_dt, label_dt, min_fix_dur, max_fix_dur))
+            return
+        fix = []
+        for t in np.arange(100, 101, transmit_dt):
+            subset = {
+                'world': gaze_data[np.logical_and(gaze_data.timestamp >= t, gaze_data.timestamp < t+transmit_dt)],
+                'eyes': (pd.DataFrame([], columns=['timestamp', 'confidence', 'x', 'y']),
+                    pd.DataFrame([], columns=['timestamp', 'confidence', 'x', 'y']))
+                }
+            next_fix, _ = online_processor.classify(subset)
+            if len(next_fix) > 0:
+                fix.append(next_fix)
+        last_fix, _ = online_processor.finish()
+        fix.append(last_fix)
+        online_fix = pd.concat(fix, sort=False)
+        offline_fix = online_processor._classifier.get_fixations(world=EyeClassifier.preprocess(gaze_data), 
+                gaze_data=gaze_data, min_fix_dur=online_processor.min_fix_dur, max_fix_dur=online_processor.max_fix_dur,
+                dt=online_processor.dt)[0]
+        
+        try:
+            if np.allclose(online_fix, offline_fix):
+                print("Succeeded: transmit={}, label={}, min={}, max={}".format(transmit_dt, label_dt, min_fix_dur, max_fix_dur))
+            else:
+                print("Failed: transmit={}, label={}, min={}, max={}".format(transmit_dt, label_dt, min_fix_dur, max_fix_dur))
+                print(online_fix)
+                print(offline_fix)
+        except ValueError:
+            print("Failed: transmit={}, label={}, min={}, max={}".format(transmit_dt, label_dt, min_fix_dur, max_fix_dur))
+            print(online_fix)
+            print(offline_fix)
 
+
+    for transmit_dt in np.linspace(0.01, 0.1, 4):
+        for label_dt in np.linspace(0.01, 0.2, 6):
+            for min_fix_dur in np.arange(25, 175, 50):
+                for max_fix_dur in np.arange(175, 500, 100):
+                    run_test(transmit_dt, label_dt, min_fix_dur, max_fix_dur)
     
 if __name__ == "__main__":
-    test_max_fix_dur()
+    test_max_fix_dur_online()
         
         
         

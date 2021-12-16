@@ -79,21 +79,25 @@ class _LabelFuser():
             else:
                 labels.append(fused_label)
             cts.append(counts)
-            self._last_time_cutoff += self.dt
             ts.append(self._last_time_cutoff)
+            self._last_time_cutoff += self.dt
         # save the extra bits
         self._prev_raw = raw_labels[raw_labels.timestamp >= self._last_time_cutoff]
         if len(labels) > 0:
             self._prev_label = labels[-1]
-        
         return pd.concat((pd.DataFrame({'timestamp': ts, 'label': labels}), pd.DataFrame(cts)), axis=1)
     
     def reset(self):
         if len(self._prev_raw) > 0:
-            fused_labels, _ = ibmm.EyeClassifier._fuse_local(self._prev_raw)
-            final_data = pd.DataFrame({'timestamp': [np.max(self._prev_raw.timestamp)], 'label': fused_labels if fused_labels is not None else ibmm.EyeClassifier.LABEL_NOISE})
+            fused_labels, cts = ibmm.EyeClassifier._fuse_local(self._prev_raw)
+            final_data = pd.concat((
+                pd.DataFrame({'timestamp': [np.min(self._prev_raw.timestamp)], 
+                    'label': fused_labels if fused_labels is not None else ibmm.EyeClassifier.LABEL_NOISE}),
+                pd.DataFrame([cts])), axis=1)
+            final_data = final_data.append({'timestamp': final_data.timestamp[0]+self.dt,
+                               'label': ibmm.EyeClassifier.LABEL_NOISE}, ignore_index=True)
         else:
-            final_data = pd.DataFrame([], columns=['timestamp', 'label'])
+            final_data = pd.DataFrame([self._last_time_cutoff, ibmm.EyeClassifier.LABEL_NOISE], columns=['timestamp', 'label'])
         self._prev_raw = []
         self._last_time_cutoff = None
         return final_data
@@ -126,13 +130,13 @@ class _LabelPostprocessor():
                 # don't double-send the first point since we sent it last time
                 mask[0] = False
                 
-            # strip off the last point since we haven't confirmed it yet
         self._prev_labels = pd.DataFrame()
         return all_labels.loc[mask,:]
     
 class _FixationDetector():
-    def __init__(self,  min_fix_dur):
+    def __init__(self,  min_fix_dur, max_fix_dur=np.inf):
         self.min_fix_dur = min_fix_dur
+        self.max_fix_dur = max_fix_dur
         self._prev_data = {'world': pd.DataFrame(), 'eyes': [ pd.DataFrame(), pd.DataFrame() ]}
         self._prev_labels = pd.DataFrame()
         self._last_fix_id = -1
@@ -151,22 +155,39 @@ class _FixationDetector():
             # so trim off the ongoing fixation and save it as previous data
             # we'll update next time we get data
             fix_idx = np.flatnonzero(labels.label != ibmm.EyeClassifier.LABEL_FIX)
-            last_fix_idx = fix_idx[-1] if np.any(fix_idx) else 0
-            self._prev_labels = labels.iloc[last_fix_idx:, :]
-            self._prev_data = _call_on_eyes_and_world(lambda d: d[0][d[0].timestamp >= labels.timestamp.values[last_fix_idx]], 0, (data,))
-            # clear to make sure we don't get a trailing fixation (no need to clear the data here)
-            labels = labels.iloc[:last_fix_idx,:]
+            last_fix_idx = fix_idx[-1]+1 if len(fix_idx) > 0 else 0
+            
+            # if the saved fix data is longer than max_fix_dur, only save past that duration
+            dur_to_save = (labels.timestamp.values[-1] - labels.timestamp.values[last_fix_idx])*1e3
+            if dur_to_save >= self.max_fix_dur:
+                break_tm = labels.timestamp.values[last_fix_idx] + self.max_fix_dur * np.floor(dur_to_save/self.max_fix_dur)*1e-3
+                break_idx = labels.timestamp.values.searchsorted(break_tm, side='left')
+                break_val = labels.iloc[[break_idx]].copy()
+                break_val.timestamp = break_tm
+
+                self._prev_labels = pd.concat((break_val, labels.iloc[break_idx:, :]), axis=0, ignore_index=True)
+                self._prev_data = _call_on_eyes_and_world(lambda d: d[0][d[0].timestamp >= break_tm], 0, (data,))
+
+                labels = labels.iloc[:break_idx,:]
+                if labels.timestamp.values[-1] < break_tm:
+                    labels = pd.concat((labels, break_val), axis=0, ignore_index=True)
+            else:
+                self._prev_labels = labels.iloc[last_fix_idx:, :]
+                self._prev_data = _call_on_eyes_and_world(lambda d: d[0][d[0].timestamp >= labels.timestamp.values[last_fix_idx]], 0, (data,))
+                # clear to make sure we don't get a trailing fixation (no need to clear the data here)
+                labels = labels.iloc[:last_fix_idx,:]
         else:
             self._prev_labels = labels.tail(1)
             self._prev_data = _call_on_eyes_and_world(lambda d: d[0][d[0].timestamp >= labels.timestamp.values[-1]], 0, (data,))
-        fix, gaze_raw = ibmm.EyeClassifier.get_fixations_from_labels(labels, data['world'] if 'world' in data else None, self.min_fix_dur)
+
+        fix, gaze_raw = ibmm.EyeClassifier.get_fixations_from_labels(labels, data['world'] if 'world' in data else None, self.min_fix_dur, self.max_fix_dur)
         if len(fix) > 0:
             fix.index = fix.index + self._last_fix_id + 1
             self._last_fix_id = fix.index.values[-1]
         return fix, gaze_raw
     
     def reset(self):
-        fix, gaze_raw = ibmm.EyeClassifier.get_fixations_from_labels(self._prev_labels, self._prev_data['world'] if 'world' in self._prev_data else None, self.min_fix_dur)
+        fix, gaze_raw = ibmm.EyeClassifier.get_fixations_from_labels(self._prev_labels, self._prev_data['world'] if 'world' in self._prev_data else None, self.min_fix_dur, self.max_fix_dur)
         fix.index = fix.index + self._last_fix_id + 1
         self._prev_data = {'world': pd.DataFrame(), 'eyes': [ pd.DataFrame(), pd.DataFrame() ]}
         self._prev_labels = pd.DataFrame()
@@ -175,12 +196,12 @@ class _FixationDetector():
 
         
 class EyeClassifierOnline(object):
-    def __init__(self, detection_criteria=['world', 'eyes'], dt=None, min_fix_dur=100):
+    def __init__(self, detection_criteria=['world', 'eyes'], dt=None, min_fix_dur=100, max_fix_dur=1000):
         self._classifier = ibmm.EyeClassifier()
         self._preprocess = _Preprocessor(self)
         self._fuse = _LabelFuser(dt)
         self._postprocess = _LabelPostprocessor()
-        self._get_fixations = _FixationDetector(min_fix_dur)
+        self._get_fixations = _FixationDetector(min_fix_dur, max_fix_dur)
         self.detection_criteria = detection_criteria
         self._is_running = False
         
@@ -190,7 +211,9 @@ class EyeClassifierOnline(object):
     @dt.setter
     def dt(self, dt):
         if self._is_running:
-            raise AttributeError('Cannot set dt value while ibmmpy is running. Call finish() before setting value.')
+            raise ValueError('Cannot set dt value while ibmmpy is running. Call finish() before setting value.')
+        if dt > self.min_fix_dur*1e-3:
+            raise ValueError('Must have dt <= min_fix_dur')
         self._fuse.dt = dt
         
     @property
@@ -199,8 +222,19 @@ class EyeClassifierOnline(object):
     @min_fix_dur.setter
     def min_fix_dur(self, min_fix_dur):
         if self._is_running:
-            raise AttributeError('Cannot set min_fix_dur value while ibmmpy is running. Call finish() before setting value.')
+            raise ValueError('Cannot set min_fix_dur value while ibmmpy is running. Call finish() before setting value.')
+        if min_fix_dur < self.dt*1e3:
+            raise ValueError('Must have min_fix_dur >= dt')
         self._get_fixations.min_fix_dur = min_fix_dur
+        
+    @property
+    def max_fix_dur(self):
+        return self._get_fixations.max_fix_dur
+    @max_fix_dur.setter
+    def max_fix_dur(self, max_fix_dur):
+        if self._is_running:
+            raise ValueError('Cannot set min_fix_dur value while ibmmpy is running. Call finish() before setting value.')
+        self._get_fixations.max_fix_dur = max_fix_dur
         
     def train(self, data):
         # data: a dictionary with {'world': world data, 'eyes': one or two-length list of data}
