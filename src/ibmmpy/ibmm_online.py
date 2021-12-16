@@ -96,8 +96,10 @@ class _LabelFuser():
                 pd.DataFrame([cts])), axis=1)
             final_data = final_data.append({'timestamp': final_data.timestamp[0]+self.dt,
                                'label': ibmm.EyeClassifier.LABEL_NOISE}, ignore_index=True)
-        else:
+        elif self._last_time_cutoff is not None:
             final_data = pd.DataFrame([self._last_time_cutoff, ibmm.EyeClassifier.LABEL_NOISE], columns=['timestamp', 'label'])
+        else:
+            final_data = pd.DataFrame([], columns=['timestamp', 'label'])
         self._prev_raw = []
         self._last_time_cutoff = None
         return final_data
@@ -134,12 +136,16 @@ class _LabelPostprocessor():
         return all_labels.loc[mask,:]
     
 class _FixationDetector():
-    def __init__(self,  min_fix_dur, max_fix_dur=np.inf):
+    def __init__(self, min_fix_dur=None, max_fix_dur=np.inf):
         self.min_fix_dur = min_fix_dur
         self.max_fix_dur = max_fix_dur
         self._prev_data = {'world': pd.DataFrame(), 'eyes': [ pd.DataFrame(), pd.DataFrame() ]}
         self._prev_labels = pd.DataFrame()
         self._last_fix_id = -1
+
+    # need to create this so pickle calls __init__ on old-style classes
+    def __getinitargs__(self):
+        return self.min_fix_dur, self.max_fix_dur
         
     def __call__(self, raw_data, labels):
         data = _call_on_eyes_and_world(lambda lst: pd.concat(lst), 0, (self._prev_data, raw_data))
@@ -204,7 +210,7 @@ class EyeClassifierOnline(object):
         self._get_fixations = _FixationDetector(min_fix_dur, max_fix_dur)
         self.detection_criteria = detection_criteria
         self._is_running = False
-        
+
     @property
     def dt(self):
         return self._fuse.dt
@@ -234,6 +240,8 @@ class EyeClassifierOnline(object):
     def max_fix_dur(self, max_fix_dur):
         if self._is_running:
             raise ValueError('Cannot set min_fix_dur value while ibmmpy is running. Call finish() before setting value.')
+        if max_fix_dur < self.min_fix_dur:
+            raise ValueError('Need max_fix_dur >= min_fix_dur')
         self._get_fixations.max_fix_dur = max_fix_dur
         
     def train(self, data):

@@ -342,7 +342,7 @@ def main():
         rospy.loginfo('Running offline calibration from {}, goal spec {}'.format(offline_cal_file, goal))
         detector.calibrate(offline_cal_file, goal)
     elif offline_cal_dir != '':
-        detector.model = load_calibration_from_dir(offline_cal_dir)
+        detector.model, _ = load_calibration_from_dir(offline_cal_dir)
         
     detector.start()
     rospy.spin()
