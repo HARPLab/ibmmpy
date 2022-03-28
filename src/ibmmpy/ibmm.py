@@ -115,7 +115,7 @@ class EyeClassifier:
     
     @staticmethod
     def _fit(model, data):
-        model.fit(data.loc[np.logical_not(np.isnan(data['velocity'])), 'velocity'].values.reshape(-1,1))
+        model.fit(data.loc[np.logical_not(pd.isnull(data['velocity'])), 'velocity'].values.reshape(-1,1))
         
     def fit(self, eyes=None, world=None):
         """
@@ -149,7 +149,7 @@ class EyeClassifier:
     @staticmethod
     def _predict(model, model_labels, data):
         labels = np.ones(len(data), dtype=np.int8)*EyeClassifier.LABEL_NOISE
-        valid_mask = np.logical_not(np.isnan(data['velocity']))
+        valid_mask = np.logical_not(pd.isnull(data['velocity']))
         if np.any(valid_mask):
             labels[valid_mask] = model_labels[model.predict(data.loc[valid_mask, 'velocity'].values.reshape(-1,1))]
         return labels
